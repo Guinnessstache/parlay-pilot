@@ -101,12 +101,20 @@ function parsePrompt(text) {
   const games = upcoming();
   const now = new Date();
   let ids = null;
-  const teamHits = games.filter(g => [g.home, g.away].some(team => {
-    const words = team.toLowerCase().split(' ');
-    const nick = words[words.length - 1];
-    const city = words.slice(0, -1).join(' ');
-    return t.includes(` ${nick}`) || (city.length > 3 && t.includes(city));
-  }));
+  // Nicknames first ("Rams"); fall back to city ("Los Angeles") only if no nickname matched.
+  const parts = team => { const w = team.toLowerCase().split(' '); return { nick: w[w.length - 1], city: w.slice(0, -1).join(' ') }; };
+  let teamHits = games.filter(g => [g.home, g.away].some(team => new RegExp(`\\b${parts(team).nick}\\b`).test(t)));
+  if (!teamHits.length) teamHits = games.filter(g => [g.home, g.away].some(team => { const c = parts(team).city; return c.length > 3 && t.includes(c); }));
+  // A named team means its next game, not every game it has on the board.
+  if (teamHits.length) {
+    const seenTeams = new Set();
+    teamHits = teamHits.sort((a, b) => Date.parse(a.start) - Date.parse(b.start)).filter(g => {
+      const named = [g.home, g.away].filter(team => new RegExp(`\\b${parts(team).nick}\\b`).test(t) || t.includes(parts(team).city));
+      if (named.every(n => seenTeams.has(n))) return false;
+      named.forEach(n => seenTeams.add(n));
+      return true;
+    });
+  }
   if (teamHits.length) ids = teamHits.map(g => g.id);
   else if (/tonight|today/.test(t)) ids = games.filter(g => sameLocalDay(new Date(g.start), now)).map(g => g.id);
   else {
@@ -209,7 +217,24 @@ function generate(q) {
 
   const header = `<div class="head"><h2>Your best shots</h2><span class="sub">${money(q.stake)} → ${money(q.stake * q.target)} payout · ${fmtAmerican(q.target)} · ${legs.length} lines across ${nGames} game${nGames === 1 ? '' : 's'} on ${BOOK_NAMES[q.book]}</span></div>`;
   if (!tickets.length) {
-    res.innerHTML = header + `<div class="notice bad">Couldn't reach ${fmtAmerican(q.target)} with ${q.maxLegs} legs from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}. Try adding games, raising max legs, turning on props / alt lines, or lowering the target.</div>`;
+    // Explain *why*: games that only have main lines posted, and the most they can pay.
+    const chosen = (eventIds || upcoming().map(g => g.id)).map(id => state.data.events.find(e => e.id === id)).filter(Boolean);
+    const thin = chosen.filter(e => Object.keys(e.books?.[q.book]?.m || {}).every(k => ['h2h', 'spreads', 'totals'].includes(k)));
+    const best = (ev, keys) => Math.max(1, ...keys.flatMap(k => (ev.books?.[q.book]?.m?.[k]?.o || []).map(o => o.p)));
+    const maxDec = chosen.slice(0, q.maxLegs).reduce((a, e) => a * best(e, ['h2h', 'spreads']) * (q.sgp ? best(e, ['totals']) : 1), 1);
+    const rich = upcoming().filter(e => Object.keys(e.books?.[q.book]?.m || {}).some(k => !['h2h', 'spreads', 'totals'].includes(k)));
+    let msg = `Couldn't reach ${fmtAmerican(q.target)} from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}.`;
+    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} moneyline, spread and total posted so far — alt lines and player props load about 12 hours before kickoff. With just those, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
+    else msg += ' Try adding games, raising max legs, or lowering the target.';
+    const fixes = [];
+    if (rich.length && thin.length) fixes.push(`<button type="button" class="btn" data-fix="rich">Use ${rich.length === 1 ? `${esc(rich[0].away)} @ ${esc(rich[0].home)}` : `the ${rich.length} games with props`}</button>`);
+    if (upcoming().length > nGames) fixes.push(`<button type="button" class="btn" data-fix="all">Use all ${upcoming().length} games</button>`);
+    res.innerHTML = header + `<div class="notice bad">${msg}${fixes.length ? `<div class="fixes">${fixes.join('')}</div>` : ''}</div>`;
+    res.querySelectorAll('[data-fix]').forEach(b => b.addEventListener('click', () => {
+      state.selected = new Set((b.dataset.fix === 'rich' ? rich : upcoming()).filter(g => g.books?.[q.book]).map(g => g.id));
+      renderGames();
+      $('#form').requestSubmit();
+    }));
     return;
   }
   const notes = [];
@@ -340,6 +365,24 @@ function loadShared(hash) {
   return true;
 }
 
+
+function setExamples() {
+  const games = upcoming();
+  if (!games.length) return;
+  const now = new Date();
+  const rich = games.filter(g => Object.keys(g.books?.draftkings?.m || g.books?.fanduel?.m || {}).some(k => k.startsWith('player_')));
+  const first = rich[0] || games[0];
+  const tonight = sameLocalDay(new Date(first.start), now);
+  const when = tonight ? "tonight's game" : `the ${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date(first.start))} game`;
+  const nick = n => n.split(' ').slice(-1)[0];
+  const ex = [
+    `$10 to win $1000 on ${when}`,
+    `$25 to win $250 this week, no props`,
+    `$5 into $500 on FanDuel, ${nick(first.home)} game`
+  ];
+  $('#examples').innerHTML = ex.map(t => `<button type="button">${esc(t)}</button>`).join('');
+}
+
 // ---------- boot ----------
 async function boot() {
   $('#helpline').textContent = CONFIG.helpline.text;
@@ -353,6 +396,7 @@ async function boot() {
     return;
   }
   selectScope('tonight');
+  setExamples();
 
   document.querySelectorAll('#book button').forEach(b => b.addEventListener('click', () => { setBook(b.dataset.v); renderGames(); }));
   document.querySelectorAll('.game-quick button').forEach(b => b.addEventListener('click', () => selectScope(b.dataset.scope)));

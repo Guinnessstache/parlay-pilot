@@ -173,3 +173,5 @@ main { max-width: 920px; margin: 0 auto; padding: 0 16px 40px; }
 .t-summary:empty { display: none; }
 .owner-refresh { margin-left: 8px; background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; text-decoration: none; }
 .owner-refresh:hover { border-color: var(--accent); }
+
+.notice .fixes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
