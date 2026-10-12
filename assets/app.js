@@ -93,9 +93,15 @@ function parsePrompt(text) {
 
   if (/fan\s?duel|\bfd\b/.test(t)) out.book = 'fanduel';
   if (/draft\s?kings|\bdk\b/.test(t)) out.book = 'draftkings';
-  if (/no (?:player )?props|without props|game lines only/.test(t)) out.props = false;
-  if (/no same.?game|different games|no sgp/.test(t)) out.sgp = false;
-  if ((m = t.match(/(\d+)\s*(?:-|\s)?legs?/))) out.maxLegs = Math.min(CONFIG.maxLegsCap, parseInt(m[1]));
+  out.props = !/no (?:player )?props|without props|game lines only/.test(t);  // each request resets it
+  out.sgp = !/no same.?game|different games|no sgp/.test(t);
+  // leg counts: "3-5 legs", "exactly 4 legs", "at least 4 legs", "4+ legs", "minimum 3 legs", "max 5 legs", "4 legs"
+  const cap = n => Math.max(1, Math.min(CONFIG.maxLegsCap, n));
+  if ((m = t.match(/(\d+)\s*(?:-|to)\s*(\d+)\s*legs?/))) { out.minLegs = cap(+m[1]); out.maxLegs = cap(+m[2]); }
+  else if ((m = t.match(/exactly\s+(\d+)\s*legs?/))) { out.minLegs = out.maxLegs = cap(+m[1]); }
+  else if ((m = t.match(/(?:at least|minimum(?: of)?|min)\s+(\d+)\s*legs?|(\d+)\s*\+\s*legs?|(\d+)\s*or more legs?/))) { out.minLegs = cap(+(m[1] || m[2] || m[3])); }
+  else if ((m = t.match(/(?:at most|maximum(?: of)?|max|up to|no more than)\s+(\d+)\s*legs?/))) { out.maxLegs = cap(+m[1]); }
+  else if ((m = t.match(/(\d+)\s*-?\s*legs?/))) { out.minLegs = out.maxLegs = cap(+m[1]); }
 
   // which games
   const games = upcoming();
@@ -180,10 +186,20 @@ function applyParsed(p) {
   if (p.book) setBook(p.book);
   if (p.props != null) $('#props').checked = p.props;
   if (p.sgp != null) $('#sgp').checked = p.sgp;
-  if (p.maxLegs) { $('#maxlegs').value = p.maxLegs; $('#maxlegs-out').value = p.maxLegs; }
+  {
+    // each request sets the leg range; unmentioned = default 1-6
+    const mn = p.minLegs || 1, mx = Math.max(p.maxLegs || Math.max(6, mn), mn);
+    $('#minlegs').value = mn; $('#maxlegs').value = mx;
+    if (mn > 1) $('.more').open = true;
+  }
   if (p.games) { state.selected = new Set(p.games); renderGames(); }
 }
 
+function legRange() {
+  const clamp = v => Math.max(1, Math.min(CONFIG.maxLegsCap, parseInt(v) || 1));
+  const mn = clamp($('#minlegs').value), mx = Math.max(mn, clamp($('#maxlegs').value));
+  return { minLegs: mn, maxLegs: mx };
+}
 function readForm() {
   const stake = parseFloat($('#stake').value);
   const win = parseFloat($('#win').value);
@@ -193,7 +209,7 @@ function readForm() {
     target: mode === 'profit' ? 1 + win / stake : win / stake,
     games: [...state.selected],
     props: $('#props').checked, alts: $('#alts').checked, sgp: $('#sgp').checked,
-    questionable: $('#questionable').checked, form: $('#form-weight').checked, maxLegs: parseInt($('#maxlegs').value)
+    questionable: $('#questionable').checked, form: $('#form-weight').checked, ...legRange()
   };
 }
 
@@ -208,10 +224,10 @@ function generate(q) {
     stats: state.stats, useForm: q.form
   });
   const nGames = new Set(legs.map(l => l.eventId)).size;
-  let tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(2, Math.min(q.maxLegs, 5)) : 1 });
+  let tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(2, q.minLegs, Math.min(q.maxLegs, 5)) : 1 });
   let widened = false;
   if (!tickets.length) { // retry with a looser payout window
-    tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, sameGame: q.sgp, maxPerGame: q.sgp ? 5 : 1, lo: 0.85, hi: 1.8 });
+    tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(5, q.minLegs) : 1, lo: 0.85, hi: 1.8 });
     widened = tickets.length > 0;
   }
 
@@ -225,6 +241,8 @@ function generate(q) {
     const rich = upcoming().filter(e => Object.keys(e.books?.[q.book]?.m || {}).some(k => !['h2h', 'spreads', 'totals'].includes(k)));
     let msg = `Couldn't reach ${fmtAmerican(q.target)} from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}.`;
     if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} moneyline, spread and total posted so far — alt lines and player props load about 12 hours before kickoff. With just those, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
+    else if (q.minLegs > 1 && !q.sgp && q.minLegs > nGames) msg += ` A ${q.minLegs}-leg minimum with same-game legs off needs at least ${q.minLegs} games — pick more games or turn same-game legs on.`;
+    else if (q.minLegs > 1) msg += ` With at least ${q.minLegs} legs, each leg has to be a short price — try lowering the minimum, adding games, or raising the target.`;
     else msg += ' Try adding games, raising max legs, or lowering the target.';
     const fixes = [];
     if (rich.length && thin.length) fixes.push(`<button type="button" class="btn" data-fix="rich">Use ${rich.length === 1 ? `${esc(rich[0].away)} @ ${esc(rich[0].home)}` : `the ${rich.length} games with props`}</button>`);
@@ -402,7 +420,9 @@ async function boot() {
 
   document.querySelectorAll('#book button').forEach(b => b.addEventListener('click', () => { setBook(b.dataset.v); renderGames(); }));
   document.querySelectorAll('.game-quick button').forEach(b => b.addEventListener('click', () => selectScope(b.dataset.scope)));
-  $('#maxlegs').addEventListener('input', e => ($('#maxlegs-out').value = e.target.value));
+  // keep min <= max
+  $('#minlegs').addEventListener('change', () => { const r = legRange(); $('#minlegs').value = r.minLegs; if (+$('#maxlegs').value < r.minLegs) $('#maxlegs').value = r.minLegs; });
+  $('#maxlegs').addEventListener('change', () => { const r = legRange(); $('#maxlegs').value = r.maxLegs; if (+$('#minlegs').value > r.maxLegs) $('#minlegs').value = r.maxLegs; });
   $('#examples').addEventListener('click', e => {
     if (e.target.tagName !== 'BUTTON') return;
     $('#prompt').value = e.target.textContent;

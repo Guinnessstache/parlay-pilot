@@ -77,7 +77,10 @@
             <label><input type="checkbox" id="sgp" checked> Same-game legs</label>
             <label><input type="checkbox" id="questionable"> Allow questionable players</label>
             <label title="Blends each leg's last-5-game hit rate into its chance, weighted by sample size. The betting market still dominates."><input type="checkbox" id="form-weight" checked> Factor in recent form</label>
-            <label class="legs">Max legs <input type="range" id="maxlegs" min="1" max="10" value="6"><output id="maxlegs-out">6</output></label>
+            <span class="legs">Legs
+              <label>min <input type="number" id="minlegs" min="1" max="10" value="1" inputmode="numeric"></label>
+              <label>max <input type="number" id="maxlegs" min="1" max="10" value="6" inputmode="numeric"></label>
+            </span>
           </div>
         </details>
 

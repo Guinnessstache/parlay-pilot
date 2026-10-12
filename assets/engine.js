@@ -189,11 +189,15 @@ export function buildLegs(data, injuriesList, opts) {
 // ---------- search ----------
 // target = decimal odds wanted (e.g. $10 to win $1000 -> 101.0)
 export function findParlays(legs, target, opts = {}) {
-  const { maxLegs = 8, maxPerGame = 3, sameGame = true, lo = 1.0, hi = 1.3, beam = 400, results = 3 } = opts;
+  const { maxLegs = 8, minLegs = 1, maxPerGame = 3, sameGame = true, lo = 1.0, hi = 1.3, beam = 400, results = 3 } = opts;
+  // With a leg minimum (promo requirements), legs must be shorter-priced on average,
+  // so let heavier favourites into the pool.
+  const perLeg = Math.pow(target, 1 / Math.max(1, minLegs));
+  const minDec = Math.min(1.08, 1 + (perLeg - 1) * 0.35);
   const logT = Math.log(target);
 
   // Candidate pool: reasonably priced legs that can contribute without overshooting alone.
-  let pool = legs.filter(l => l.ev > -0.12 && l.dec <= target * hi && l.dec >= 1.08);
+  let pool = legs.filter(l => l.ev > -0.12 && l.dec <= target * hi && l.dec >= minDec);
   // score each leg by how efficiently it buys odds: log(p)/log(dec) closer to -1 is better
   for (const l of pool) l.eff = Math.log(l.p) / Math.log(l.dec);
   pool.sort((a, b) => b.ev - a.ev);
@@ -207,6 +211,7 @@ export function findParlays(legs, target, opts = {}) {
 
   const done = [];
   const consider = s => {
+    if (s.idx.length < minLegs) return;
     const ratio = Math.exp(s.logD - logT);
     if (ratio >= lo && ratio <= hi) done.push(s);
   };
@@ -221,6 +226,9 @@ export function findParlays(legs, target, opts = {}) {
         if (g >= (sameGame ? maxPerGame : 1)) continue;
         const logD = s.logD + Math.log(l.dec);
         if (logD > logT + Math.log(hi)) continue;
+        // can the legs still required by minLegs fit under the payout cap?
+        const still = Math.max(0, minLegs - s.idx.length - 1);
+        if (still && logD + still * Math.log(minDec) > logT + Math.log(hi)) continue;
         const slots = new Set(s.slots); slots.add(l.slot);
         const ns = { idx: [...s.idx, i], logD, logP: s.logP + Math.log(l.p), slots, perGame: { ...s.perGame, [l.eventId]: g + 1 }, last: i };
         consider(ns);
@@ -229,7 +237,12 @@ export function findParlays(legs, target, opts = {}) {
     }
     if (!next.length) break;
     // estimated final log-probability if we finish efficiently
-    for (const s of next) s.h = s.logP + Math.max(0, logT - s.logD) * bestEff - 0.01 * s.idx.length;
+    for (const s of next) {
+      const still = Math.max(0, minLegs - s.idx.length);
+      // remaining odds to buy, at least enough for the legs still required
+      const need = Math.max(logT - s.logD, still * Math.log(minDec * 1.15));
+      s.h = s.logP + Math.max(0, need) * bestEff - 0.01 * s.idx.length;
+    }
     next.sort((a, b) => b.h - a.h);
     states = next.slice(0, beam);
   }
