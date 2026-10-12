@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import {
   BOOK_NAMES, MARKET_LABEL, buildLegs, findParlays, summarize, betslipLink,
-  fmtAmerican, indexInjuries, teamInjuryNotes, legLabel
+  fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket
 } from './engine.js';
 
 const $ = s => document.querySelector(s);
@@ -26,6 +26,23 @@ function toast(msg) {
 }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+
+function nextRefresh() {
+  const { hoursUTC, minute, days } = CONFIG.refreshSchedule || {};
+  if (!hoursUTC) return null;
+  const now = Date.now();
+  for (let d = 0; d < 8; d++) for (const h of hoursUTC) {
+    const t = new Date(); t.setUTCDate(t.getUTCDate() + d); t.setUTCHours(h, minute, 0, 0);
+    if (t > now && days.includes(t.getUTCDay())) return t;
+  }
+  return null;
+}
+function isOwner() {
+  const m = location.search.match(/[?&]owner=([01])/);
+  try { if (m) localStorage.setItem('pp-owner', m[1]); return localStorage.getItem('pp-owner') === '1'; }
+  catch { return m?.[1] === '1'; }
+}
+
 // ---------- data ----------
 async function loadData() {
   const bust = `?t=${Math.floor(Date.now() / 60000)}`;
@@ -40,7 +57,10 @@ async function loadData() {
   const fresh = $('#freshness');
   const stale = (Date.now() - Date.parse(odds.generated_at)) / 60000 > CONFIG.staleAfterMinutes;
   fresh.classList.toggle('stale', stale);
-  fresh.innerHTML = `<span class="dot"></span>Odds &amp; injuries updated ${ago(odds.generated_at)}`;
+  const nxt = nextRefresh();
+  fresh.innerHTML = `<span class="dot"></span>Odds &amp; injuries updated ${ago(odds.generated_at)}` +
+    (nxt ? `<br>Next auto-update ${dayFmt.format(nxt)}` : '') +
+    (isOwner() ? `<a class="owner-refresh" target="_blank" rel="noopener" href="https://github.com/${CONFIG.repo}/actions/workflows/${CONFIG.workflowFile}" title="Opens GitHub: click 'Run workflow' (~9 credits). New odds appear in ~1 min.">↻ Refresh odds</a>` : '');
 }
 const upcoming = () => (state.data?.events || []).filter(e => Date.parse(e.start) > Date.now() - 5 * 60e3);
 
@@ -196,7 +216,7 @@ function generate(q) {
   if (outCount) notes.push(`<div class="notice">Skipped ${outCount} prop line${outCount > 1 ? 's' : ''} on injured players (${[...new Set(excluded.filter(e => /listed/.test(e.why)).map(e => e.why))].slice(0, 3).map(esc).join('; ')}${outCount > 3 ? '…' : ''}).</div>`);
 
   res.innerHTML = header + notes.join('');
-  tickets.forEach((t, i) => res.appendChild(renderTicket(t, q, i === 0 ? 'Best chance' : `Option ${i + 1}`)));
+  tickets.forEach((t, i) => res.appendChild(renderTicket(t, q, i === 0 ? 'Best chance' : `Option ${i + 1}`, { excludedCount: outCount })));
   res.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -212,7 +232,7 @@ function renderTicket(t, q, title, opts = {}) {
   node.querySelector('.t-chance').textContent = `${pct(t.p)} · ${oneIn(t.p)}`;
   node.querySelector('.t-meter .fill').style.width = `${Math.max(0.5, Math.min(100, t.p * 100))}%`;
   const edge = -t.ev;
-  node.querySelector('.t-meter-label').textContent = edge > 0 ? `House edge ${(edge * 100).toFixed(1)}%` : `Priced ${(t.ev * 100).toFixed(1)}% above fair`;
+  node.querySelector('.t-meter-label').textContent = edge > 0 ? `House edge ${(edge * 100).toFixed(1)}%` : `Pays ${(t.ev * 100).toFixed(1)}% more than other books' average`;
 
   const ol = node.querySelector('.t-legs');
   for (const l of t.legs) {
@@ -224,6 +244,10 @@ function renderTicket(t, q, title, opts = {}) {
       ${l.notes.concat(l.moved ? [l.moved] : []).map(n => `<span class="note">${esc(n)}</span>`).join('')}`;
     ol.appendChild(li);
   }
+
+  node.querySelector('.t-summary').textContent = explainTicket(t, {
+    target: q.target, injuries: state.injuries, events: state.data.events, excludedCount: opts.excludedCount || 0
+  });
 
   const warn = node.querySelector('.t-warn');
   const w = [];

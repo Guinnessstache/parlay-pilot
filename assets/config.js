@@ -11,5 +11,10 @@ export const CONFIG = {
   maxLegsCap: 10,
   // Warn when the odds snapshot is older than this many minutes.
   staleAfterMinutes: 180,
+  // Must match the cron in .github/workflows/update-data.yml (UTC hours, days 0=Sun).
+  refreshSchedule: { hoursUTC: [14, 19, 23], minute: 7, days: [0, 1, 4] },
+  // Owner-only refresh button: visit the site once with ?owner=1 (?owner=0 hides it again).
+  repo: 'Guinnessstache/parlay-pilot',
+  workflowFile: 'update-data.yml',
   helpline: { text: '1-800-GAMBLER', href: 'tel:18004262537' }
 };

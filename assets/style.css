@@ -160,3 +160,9 @@ main { max-width: 920px; margin: 0 auto; padding: 0 16px 40px; }
 .t-steps-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 .t-steps .step { justify-content: flex-start; text-align: left; }
 .t-steps .step.done { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
+
+.t-summary { margin: 0; padding: 12px 18px 4px 22px; font-size: 14px; line-height: 1.55; color: #c9d6cf; border-top: 1px solid var(--line); }
+.t-summary::before { content: 'Why this ticket'; display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.t-summary:empty { display: none; }
+.owner-refresh { margin-left: 8px; background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; text-decoration: none; }
+.owner-refresh:hover { border-color: var(--accent); }
