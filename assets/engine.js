@@ -276,7 +276,7 @@ export function betslipLink(book, legs, cfg) {
   }
   if (book === 'draftkings') {
     // The Odds API returns DK outcome links as https://sportsbook.draftkings.com/?outcomes=0ML84695534_3
-    // Multiple selections are joined with '+' in the same parameter.
+    // Multiple selections: join with %2B in one parameter (tested 2026-10-12; ',' fails).
     const outs = legs.map(l => {
       if (l.link && l.link.includes('outcomes=')) {
         try { return new URL(l.link).searchParams.get('outcomes'); } catch { /* fall through */ }
@@ -284,7 +284,7 @@ export function betslipLink(book, legs, cfg) {
       return l.sid;
     }).filter(Boolean);
     if (outs.length === legs.length) {
-      return { url: `${cfg.draftkingsHost}/?outcomes=${outs.map(encodeURIComponent).join('+')}`, complete: true };
+      return { url: `${cfg.draftkingsHost}/?outcomes=${outs.map(encodeURIComponent).join('%2B')}`, complete: true }; // verified: %2B-joined loads every leg
     }
   }
   // fallback: deepest link we have for the first leg
