@@ -46,10 +46,12 @@ function isOwner() {
 // ---------- data ----------
 async function loadData() {
   const bust = `?t=${Math.floor(Date.now() / 60000)}`;
-  const [odds, inj] = await Promise.all([
+  const [odds, inj, stats] = await Promise.all([
     fetch(`data/odds.json${bust}`).then(r => r.json()),
-    fetch(`data/injuries.json${bust}`).then(r => r.json()).catch(() => ({ injuries: [] }))
+    fetch(`data/injuries.json${bust}`).then(r => r.json()).catch(() => ({ injuries: [] })),
+    fetch(`data/stats.json${bust}`).then(r => r.ok ? r.json() : null).catch(() => null)
   ]);
+  state.stats = stats;
   state.data = odds;
   state.injuries = inj.injuries || [];
   state.inj = indexInjuries(state.injuries);
@@ -183,7 +185,7 @@ function readForm() {
     target: mode === 'profit' ? 1 + win / stake : win / stake,
     games: [...state.selected],
     props: $('#props').checked, alts: $('#alts').checked, sgp: $('#sgp').checked,
-    questionable: $('#questionable').checked, maxLegs: parseInt($('#maxlegs').value)
+    questionable: $('#questionable').checked, form: $('#form-weight').checked, maxLegs: parseInt($('#maxlegs').value)
   };
 }
 
@@ -194,7 +196,8 @@ function generate(q) {
   if (q.target < 1.05) { res.innerHTML = '<div class="notice bad">That payout is less than your bet back. Raise the "to win" amount.</div>'; return; }
   const eventIds = q.games.length ? q.games : null;
   const { legs, excluded } = buildLegs(state.data, state.injuries, {
-    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, allowQuestionable: q.questionable
+    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, allowQuestionable: q.questionable,
+    stats: state.stats, useForm: q.form
   });
   const nGames = new Set(legs.map(l => l.eventId)).size;
   let tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(2, Math.min(q.maxLegs, 5)) : 1 });
@@ -245,9 +248,10 @@ function renderTicket(t, q, title, opts = {}) {
     ol.appendChild(li);
   }
 
-  node.querySelector('.t-summary').textContent = explainTicket(t, {
-    target: q.target, injuries: state.injuries, events: state.data.events, excludedCount: opts.excludedCount || 0
-  });
+  const whyData = explainTicket(t, { injuries: state.injuries, events: state.data.events, stats: state.stats, excludedCount: opts.excludedCount || 0 });
+  node.querySelector('.t-summary').innerHTML = whyData.bullets.length ? `
+    <ul>${whyData.bullets.map(b => `<li><b>${esc(b.label)}</b> <span class="w-odds">${esc(b.odds)}</span><br>${esc(b.form)}${b.verdict ? ` <span class="verdict ${/backs/.test(b.verdict) ? 'up' : /against/.test(b.verdict) ? 'down' : ''}">${esc(b.verdict)}</span>` : ''}</li>`).join('')}</ul>
+    <p>${esc(whyData.closing)}</p>` : '';
 
   const warn = node.querySelector('.t-warn');
   const w = [];
@@ -306,7 +310,7 @@ function loadShared(hash) {
   let p;
   try { p = JSON.parse(b64d(hash)); } catch { return false; }
   if (!p || p.v !== 1 || !Array.isArray(p.l)) return false;
-  const { legs } = buildLegs(state.data, state.injuries, { book: p.b, includeProps: true, includeAlts: true, allowQuestionable: true });
+  const { legs } = buildLegs(state.data, state.injuries, { book: p.b, includeProps: true, includeAlts: true, allowQuestionable: true, stats: state.stats, useForm: true });
   const byId = new Map(legs.map(l => [l.id, l]));
   const resolved = p.l.map(([id, dec]) => {
     const cur = byId.get(id);

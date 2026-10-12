@@ -28,13 +28,20 @@ Until step 5 runs, the site serves fake demo data (`scripts/make-demo-data.mjs`)
 
 What this means in numbers: at $10 → $1,000 (+9900), the best ticket in demo data hits about **0.9% (1 in 110)**, with a house edge of 6–9%. A tool can't change that; it can only stop you overpaying on top of it.
 
+## Recent form (player + team stats)
+
+Each refresh also pulls ESPN's public stats (free, no key): every team's results this season and the last 5 game logs for each player with a prop line. They feed two things:
+
+- **"Why this ticket"**: one line per leg with the stats behind it, e.g. "averaging 71 rec yds over his last 5 (88, 54, 102, 47, 64), cleared 64.5 in 3 of 5", plus a verdict (form backs it / in line / against it) based on how unusual the recent hit rate is compared to the market's odds.
+- **Pick ranking** (Fine-tune → "Factor in recent form", on by default): the recent hit rate is blended in heavily shrunk. 5 games moves a leg about 11% of the way, and never more than ±35% of its market chance. The betting market already prices in recent form, so this nudges ties rather than overriding the odds.
+
 ## Bet-slip links: test these first
 
 | Book | Format used | Status |
 |---|---|---|
 | FanDuel single leg | `…/addToBetslip?marketId=X&selectionId=Y` (returned by the API) | Documented by The Odds API |
 | FanDuel multi-leg | `…/addToBetslip?marketId[0]=X&selectionId[0]=Y&marketId[1]=…` | **Unverified**, built from community usage |
-| DraftKings | `…/event/{eventId}?outcomes=a+b+c` | **Unverified for cross-game legs** |
+| DraftKings | `…/?outcomes=a%2Bb%2Bc` | Verified 2026-10-12 (`,` does not work) |
 
 If a combined link doesn't load every leg, each leg also has its own "open leg" link. You can also change the host or format in `assets/config.js` and `betslipLink()` in `assets/engine.js`. Some states use state-specific subdomains.
 

@@ -125,7 +125,8 @@ function slotOf(leg) {
 }
 
 export function buildLegs(data, injuriesList, opts) {
-  const { book, eventIds, includeProps = true, includeAlts = true, allowQuestionable = false } = opts;
+  const { book, eventIds, includeProps = true, includeAlts = true, allowQuestionable = false, stats = null, useForm = true } = opts;
+  const evById = new Map(data.events.map(e => [e.id, e]));
   const cons = buildConsensus(data.events);
   const inj = indexInjuries(injuriesList);
   const legs = [], excluded = [];
@@ -161,6 +162,10 @@ export function buildLegs(data, injuriesList, opts) {
             leg.notes.push(`${i.player} is ${i.status}${i.detail ? ' (' + i.detail + ')' : ''}`);
           }
         }
+        // Recent form: shown always; nudges the probability only when useForm is on.
+        leg.pMarket = leg.p;
+        leg.form = stats ? legForm(leg, stats, evById.get(ev.id)) : null;
+        if (useForm && leg.form && leg.form.n >= 2) leg.p = blendForm(leg.pMarket, leg.form);
         // Prices that disagree wildly with every other book are usually stale or mismatched lines.
         if (leg.ev > 0.25) { excluded.push({ leg, why: 'price looks stale vs. other books' }); continue; }
         if (leg.nBooks < 2) leg.notes.push('only one book prices this - fair odds less certain');
@@ -242,47 +247,134 @@ export function findParlays(legs, target, opts = {}) {
 export function summarize(legs) {
   const dec = legs.reduce((a, l) => a * l.dec, 1);
   const p = legs.reduce((a, l) => a * l.p, 1);
+  const pMarket = legs.reduce((a, l) => a * (l.pMarket ?? l.p), 1);
   const games = new Set(legs.map(l => l.eventId));
   return {
     legs, dec, p,
     bookImplied: 1 / dec,
-    ev: p * dec - 1,                     // expected return per $1 (negative = house edge)
+    pMarket,
+    ev: pMarket * dec - 1,               // vs the betting market (negative = house edge)
     sameGame: games.size < legs.length,
     games: games.size
   };
 }
 
-// ---------- plain-English rationale ----------
-// Built only from numbers already on the ticket - no invented analysis.
-const pc = p => p >= 0.1 ? `${Math.round(p * 100)}%` : `${(p * 100).toFixed(1)}%`;
-const am = d => { const a = decToAmerican(d); return a > 0 ? `+${a}` : `${a}`; };
-const shortTeam = n => (n || '').split(' ').slice(-1)[0];
+// ---------- recent form (ESPN game logs) ----------
+const STAT_KEY = { player_pass_yds: 'py', player_rush_yds: 'ry', player_reception_yds: 'recy', player_receptions: 'rec', player_pass_tds: 'ptd' };
+const STAT_WORD = { py: 'pass yds', ry: 'rush yds', recy: 'rec yds', rec: 'catches', ptd: 'pass TDs' };
+const r1 = x => Math.round(x * 10) / 10;
+const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+const nick = n => (n || '').split(' ').slice(-1)[0];
+const lastN = (g, k = 5) => g.slice(0, k);
 
-function favoriteIn(leg, events) {
-  const ev = events.find(e => e.id === leg.eventId);
-  return ev ? { home: ev.home, away: ev.away } : null;
+// Shrink the recent hit rate hard toward the market (8 phantom games at market odds),
+// weight it by sample size (5 games = 11%, 10 games = 20%), and never move a leg more
+// than ±35% of its market chance. Small samples can't outvote the betting market.
+export function blendForm(pMarket, f) {
+  const hr = (f.h + 8 * pMarket) / (f.n + 8);
+  const w = f.n / (f.n + 40);
+  const p = (1 - w) * pMarket + w * hr;
+  return Math.min(0.97, Math.max(pMarket * 0.65, Math.min(pMarket * 1.35, p)));
 }
 
-export function explainTicket(t, ctx = {}) {
-  const { target, injuries = [], excludedCount = 0, events = [] } = ctx;
-  const legs = [...t.legs].filter(l => !l.gone).sort((a, b) => a.p - b.p);
-  if (!legs.length) return '';
-  const out = [];
+function teamLine(stats, name) {
+  const t = stats.teams?.[name];
+  if (!t || !t.games.length) return null;
+  const g = t.games, w = g.filter(x => x.res === 'W').length, l = g.filter(x => x.res === 'L').length;
+  return { t, g, w, l, pf: avg(g.map(x => x.pf)), pa: avg(g.map(x => x.pa)), margin: avg(g.map(x => x.pf - x.pa)) };
+}
 
-  // 1. what's doing the lifting
-  const swing = legs[0];
-  const safe = legs.filter(l => l.p >= 0.55);
-  if (legs.length === 1) {
-    out.push(`A single bet was the cheapest way to reach this payout: ${swing.label} at ${am(swing.dec)} lands about ${pc(swing.p)} of the time, and every extra leg would only add more house margin.`);
-  } else {
-    const share = Math.log(swing.dec) / Math.log(t.dec);
-    out.push(`${swing.label} (${am(swing.dec)}) is the swing leg — it supplies about ${Math.round(share * 100)}% of the payout and hits roughly ${pc(swing.p)} of the time on its own.`);
-    const rest = legs.slice(1).filter(l => !safe.includes(l));
-    if (rest.length) out.push(`${rest.map(l => `${l.label} (${am(l.dec)}, ~${pc(l.p)})`).join(' and ')} ${rest.length > 1 ? 'push' : 'pushes'} the price the rest of the way.`);
-    if (safe.length) out.push(`${safe.map(l => l.label).join(' and ')} ${safe.length > 1 ? 'are' : 'is'} a likely leg (${safe.map(l => pc(l.p)).join(', ')}) added to fine-tune the payout without much extra risk.`);
+export function legForm(leg, stats, ev) {
+  const m = leg.market;
+  // --- player props
+  if (m.startsWith('player_')) {
+    const p = stats.players?.[normName(leg.desc)];
+    if (!p) return null;
+    const g = lastN(p.games);
+    const n = g.length;
+    if (!n) return null;
+    if (m === 'player_anytime_td') {
+      const h = g.filter(x => x.rtd + x.rectd > 0).length;
+      const touches = avg(g.map(x => x.car + x.rec)), tgt = avg(g.map(x => x.tgt));
+      const usage = p.pos === 'QB' ? `${r1(avg(g.map(x => x.car)))} carries/game`
+        : tgt >= 2 && touches - avg(g.map(x => x.rec)) >= 3 ? `${r1(avg(g.map(x => x.car)))} carries + ${r1(tgt)} targets/game`
+        : tgt >= 1 ? `${r1(tgt)} targets/game` : `${r1(touches)} touches/game`;
+      if (touches === 0 && tgt === 0) return { h, n, text: `${leg.desc} hasn't had a touch or target in his last ${n} game${n > 1 ? 's' : ''} — a deep-roster long shot` };
+      return { h, n, text: `${leg.desc} has scored in ${h} of his last ${n} game${n > 1 ? 's' : ''} (${usage})` };
+    }
+    const k = STAT_KEY[m];
+    if (!k) return null;
+    const vals = g.map(x => x[k]);
+    const over = leg.name === 'Over';
+    const h = vals.filter(v => over ? v > leg.point : v < leg.point).length;
+    return { h, n, text: `${leg.desc} is averaging ${r1(avg(vals))} ${STAT_WORD[k]} over his last ${n} (${vals.join(', ')}) — ${over ? 'cleared' : 'stayed under'} ${leg.point} in ${h} of ${n}` };
   }
+  if (!ev) return null;
+  // --- game totals
+  if (/totals/.test(m)) {
+    const A = teamLine(stats, ev.away), B = teamLine(stats, ev.home);
+    if (!A || !B) return null;
+    const all = [...lastN(A.g), ...lastN(B.g)].map(x => x.pf + x.pa);
+    const over = leg.name === 'Over';
+    const h = all.filter(v => over ? v > leg.point : v < leg.point).length;
+    return { h, n: all.length,
+      text: `${nick(ev.away)} games are averaging ${r1(avg(lastN(A.g).map(x => x.pf + x.pa)))} total points and ${nick(ev.home)} games ${r1(avg(lastN(B.g).map(x => x.pf + x.pa)))}; ${h} of their ${all.length} games went ${over ? 'over' : 'under'} ${leg.point}` };
+  }
+  // --- moneyline / spreads
+  const me = teamLine(stats, leg.name);
+  const oppName = leg.name === ev.home ? ev.away : ev.home;
+  const op = teamLine(stats, oppName);
+  if (!me) return null;
+  const g = lastN(me.g);
+  const rec = `${nick(leg.name)} are ${me.w}-${me.l} (scoring ${r1(me.pf)}, allowing ${r1(me.pa)})`;
+  const opRec = op ? `; ${nick(oppName)} are ${op.w}-${op.l} (scoring ${r1(op.pf)}, allowing ${r1(op.pa)})` : '';
+  if (m === 'h2h') {
+    return { h: g.filter(x => x.res === 'W').length, n: g.length, text: rec + opRec };
+  }
+  const pt = leg.point;
+  const h = g.filter(x => x.pf - x.pa + pt > 0).length;
+  const cover = pt < 0 ? `won by ${Math.ceil(-pt)}+ in ${h} of ${g.length}` : `won or lost by ${Math.floor(pt)} or fewer in ${h} of ${g.length}`;
+  return { h, n: g.length, text: `${rec}, and have ${cover}${opRec}` };
+}
 
-  // 2. same-game logic (how the legs relate)
+// ---------- plain-English rationale ----------
+const pc = p => p >= 0.1 ? `${Math.round(p * 100)}%` : `${(p * 100).toFixed(1)}%`;
+const am = d => { const a = decToAmerican(d); return a > 0 ? `+${a}` : `${a}`; };
+
+// Returns { bullets: [{ label, odds, form, verdict }], closing }
+export function explainTicket(t, ctx = {}) {
+  const { injuries = [], excludedCount = 0, events = [], stats = null } = ctx;
+  const legs = [...t.legs].filter(l => !l.gone).sort((a, b) => a.p - b.p);
+  if (!legs.length) return { bullets: [], closing: '' };
+  const bullets = legs.map((l, i) => {
+    const role = legs.length === 1 ? 'the whole ticket'
+      : i === 0 ? `swing leg, ~${Math.round(Math.log(l.dec) / Math.log(t.dec) * 100)}% of the payout`
+      : l.p >= 0.55 ? 'likely leg, fine-tunes the price' : 'adds to the price';
+    const fm = l.form;
+    let verdict = '';
+    if (fm && fm.n >= 2) {
+      // how surprising is the recent hit rate if the market's number were right? (z-score)
+      const hr = fm.h / fm.n, mp = l.pMarket ?? l.p;
+      const z = (hr - mp) / Math.sqrt(Math.max(mp * (1 - mp), 0.0025) / fm.n);
+      verdict = z > 1 ? 'Form backs it' : z < -1 ? 'Form is against it' : 'Form is in line with the odds';
+    }
+    // role change: a teammate at the same position is out
+    let role2 = '';
+    const sp = l.desc && stats?.players?.[normName(l.desc)];
+    if (sp) {
+      const mates = injuries.filter(i => i.team === sp.team && i.pos === sp.pos && normName(i.player) !== normName(l.desc) && /out|doubtful|reserve/i.test(i.status));
+      if (mates.length) role2 = ` With ${mates.slice(0, 2).map(i => `${i.player} (${i.status})`).join(' and ')} out at ${sp.pos}, a bigger role is likely — part of why the price is what it is.`;
+    }
+    return {
+      label: l.label,
+      odds: `${am(l.dec)} · ${pc(l.p)} chance · ${role}`,
+      form: (fm ? fm.text + '.' : 'No recent game-log data for this one.') + role2,
+      verdict
+    };
+  });
+
+  const parts = [];
+  // how the legs relate within a game
   const byGame = {};
   for (const l of legs) (byGame[l.eventId] ||= []).push(l);
   for (const gl of Object.values(byGame)) {
@@ -292,23 +384,21 @@ export function explainTicket(t, ctx = {}) {
     const bigFav = gl.find(l => /spread/.test(l.market) && l.point <= -10);
     const dog = gl.find(l => (l.market === 'h2h' || /spread/.test(l.market)) && (l.point > 0 || l.dec > 2.2));
     const td = gl.filter(l => l.market === 'player_anytime_td');
-    if (over && (bigFav || td.length)) out.push(`These legs tell one story — a high-scoring game${bigFav ? ` where the ${shortTeam(bigFav.name)} pull away` : ''}${td.length ? ' with touchdowns to go around' : ''} — so they tend to hit together, and the sportsbook may trim the same-game price for that.`);
-    else if (under && dog) out.push(`Under + ${shortTeam(dog.name)} pair naturally: a slow, low-scoring game is how underdogs keep it close.`);
-    else if (under && td.length) out.push(`Heads-up: an Under and a touchdown prop work slightly against each other (fewer points, fewer TDs), so the true odds of both hitting are a bit worse than shown.`);
+    if (over && (bigFav || td.length)) parts.push(`The legs tell one story — a high-scoring game${bigFav ? ` where the ${nick(bigFav.name)} pull away` : ''}${td.length ? ' with touchdowns to go around' : ''} — so they tend to hit together; the book may trim the same-game price for that.`);
+    else if (under && dog) parts.push(`Under + ${nick(dog.name)} pair naturally: a slow, low-scoring game is how an underdog keeps it close.`);
+    else if (under && td.length) parts.push(`An Under and a TD prop work slightly against each other (fewer points, fewer TDs), so true odds are a bit worse than shown.`);
   }
+  const mkt = legs.reduce((a, l) => a * (l.pMarket ?? l.p), 1);
+  const formMoved = Math.abs(t.p - mkt) / mkt > 0.03;
+  parts.push(`Overall: about ${pc(t.p)} to cash (1 in ${Math.round(1 / t.p)})${formMoved ? ` — the betting market alone says ${pc(mkt)}, recent form ${t.p > mkt ? 'nudges it up' : 'nudges it down'}` : ''}.`);
 
-  // 3. pricing honesty
-  const avgEdge = legs.reduce((a, l) => a + (-l.ev), 0) / legs.length;
-  out.push(`${legs.length === 1 ? 'It is' : 'Each leg is'} priced within ${Math.max(1, Math.round(avgEdge * 100))}% of the market's fair odds${legs.length === 1 ? '' : ' on average'}, which is what made this the most efficient combo for ${target ? am(target) : 'your target'}; overall it cashes about ${pc(t.p)} of the time (1 in ${Math.round(1 / t.p)}).`);
-
-  // 4. injuries
-  const teams = new Set(legs.flatMap(l => { const g = favoriteIn(l, events); return g ? [g.home, g.away] : []; }));
+  const teams = new Set(legs.flatMap(l => { const e = events.find(x => x.id === l.eventId); return e ? [e.home, e.away] : []; }));
   const keyOut = injuries.filter(i => teams.has(i.team) && /out|doubtful|reserve/i.test(i.status) && ['QB', 'RB', 'WR', 'TE'].includes(i.pos));
   if (keyOut.length || excludedCount) {
     const names = keyOut.slice(0, 3).map(i => `${i.player} (${i.pos}, ${i.status})`).join(', ');
-    out.push(`Injury check: ${names ? `${names}${keyOut.length > 3 ? ` and ${keyOut.length - 3} more` : ''} ${keyOut.length > 1 ? 'are' : 'is'} sidelined — already baked into the lines` : 'no key skill players out'}${excludedCount ? `, and ${excludedCount} prop${excludedCount > 1 ? 's' : ''} on injured players ${excludedCount > 1 ? 'were' : 'was'} skipped` : ''}.`);
+    parts.push(`Injuries: ${names ? `${names}${keyOut.length > 3 ? ` +${keyOut.length - 3} more` : ''} out — already reflected in the lines` : 'no key skill players out'}${excludedCount ? `; ${excludedCount} prop${excludedCount > 1 ? 's' : ''} on injured players skipped` : ''}.`);
   }
-  return out.join(' ');
+  return { bullets, closing: parts.join(' ') };
 }
 
 // ---------- deep links ----------

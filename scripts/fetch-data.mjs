@@ -11,6 +11,7 @@
 //   INCLUDE_EVENT_MARKETS "false" to skip alt lines/props entirely (cheapest mode)
 
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { fetchStats } from './fetch-stats.mjs';
 
 const KEY = process.env.ODDS_API_KEY;
 if (!KEY) { console.error('ODDS_API_KEY is not set'); process.exit(1); }
@@ -148,6 +149,14 @@ try {
   console.warn(`injury fetch failed, keeping previous file: ${err.message}`);
   injuries = (await readPrevious('data/injuries.json'))?.injuries || [];
 }
+
+let stats = null;
+try {
+  stats = await fetchStats(events);
+} catch (err) {
+  console.warn(`stats fetch failed, keeping previous file: ${err.message}`);
+}
+if (stats) await writeFile('data/stats.json', JSON.stringify({ generated_at: generatedAt, ...stats }));
 
 await writeFile('data/odds.json', JSON.stringify({ generated_at: generatedAt, demo: false, events }));
 await writeFile('data/injuries.json', JSON.stringify({ generated_at: generatedAt, injuries }));
