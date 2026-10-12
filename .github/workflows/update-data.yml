@@ -1,0 +1,69 @@
+name: Refresh data & deploy site
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['data/**']   # bot data commits are deployed by the same run that made them
+  workflow_dispatch: {}
+  schedule:
+    # Times are UTC. Default = every 2 hours Thu-Mon (NFL game days) - sized for the
+    # Odds API $30 / 20K-credit plan. On the free tier (500 credits/mo) see README "Budget".
+    - cron: '7 */2 * * 0,1,4,5,6'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh-and-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch odds + injuries
+        if: github.event_name != 'push'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          EVENT_WINDOW_HOURS: ${{ vars.EVENT_WINDOW_HOURS || '36' }}
+          MAX_EVENTS: ${{ vars.MAX_EVENTS || '16' }}
+          INCLUDE_EVENT_MARKETS: ${{ vars.INCLUDE_EVENT_MARKETS || 'true' }}
+        run: node scripts/fetch-data.mjs
+
+      - name: Commit data snapshot
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "parlay-bot"
+          git config user.email "parlay-bot@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then echo "no data changes"; else
+            git commit -m "data: refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - name: Package site
+        run: |
+          mkdir -p _site
+          cp -r index.html assets data _site/
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

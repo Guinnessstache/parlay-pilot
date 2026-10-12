@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parlay Pilot — NFL parlay builder</title>
+  <meta name="description" content="Tell it your stake and the payout you want. It builds the NFL parlay with the best odds of hitting from live DraftKings and FanDuel prices and the injury report, and opens it in your bet slip.">
+  <meta property="og:title" content="Parlay Pilot — NFL parlay builder">
+  <meta property="og:description" content="Stake + target payout in, ready-to-load DraftKings / FanDuel parlay out.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230d1512'/><ellipse cx='32' cy='32' rx='22' ry='13' fill='none' stroke='%23c7f23a' stroke-width='5' transform='rotate(-35 32 32)'/><path d='M24 36 40 28M27 39l-3-6M33 36l-3-6M39 33l-3-6' stroke='%23c7f23a' stroke-width='3' stroke-linecap='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=Archivo+Narrow:wght@600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div id="demo-banner" class="demo-banner" hidden>
+    DEMO DATA — prices and players are fake. Add your Odds API key (see README) to go live.
+  </div>
+
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="32" rx="22" ry="13" fill="none" stroke="currentColor" stroke-width="5" transform="rotate(-35 32 32)"/><path d="M24 36 40 28M27 39l-3-6M33 36l-3-6M39 33l-3-6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+      <span>Parlay&nbsp;Pilot</span>
+    </div>
+    <div id="freshness" class="freshness"></div>
+  </header>
+
+  <main>
+    <section class="ask" id="ask">
+      <h1>What are you trying to hit?</h1>
+      <label class="prompt-wrap">
+        <span class="sr">Describe your bet</span>
+        <textarea id="prompt" rows="2" placeholder="I want to bet $10 and try to win $1000 on tonight's Monday Night Football game"></textarea>
+      </label>
+      <div class="examples" id="examples">
+        <button type="button">$10 to win $1000 on tonight's game</button>
+        <button type="button">$25 to win $250 Sunday, no props</button>
+        <button type="button">$5 into $500 on FanDuel, Chiefs game</button>
+      </div>
+
+      <form id="form" class="controls" autocomplete="off">
+        <div class="field money">
+          <label for="stake">Bet</label>
+          <div class="input-prefix"><span>$</span><input id="stake" type="number" min="1" step="1" inputmode="decimal"></div>
+        </div>
+        <div class="field money">
+          <label for="win"><select id="mode" aria-label="Payout type">
+            <option value="profit">To win</option>
+            <option value="total">Total payout</option>
+          </select></label>
+          <div class="input-prefix"><span>$</span><input id="win" type="number" min="1" step="1" inputmode="decimal"></div>
+        </div>
+        <div class="field">
+          <span class="flabel">Sportsbook</span>
+          <div class="seg" id="book" role="radiogroup">
+            <button type="button" data-v="draftkings" role="radio">DraftKings</button>
+            <button type="button" data-v="fanduel" role="radio">FanDuel</button>
+          </div>
+        </div>
+
+        <div class="field wide">
+          <span class="flabel">Games <span id="games-count" class="muted"></span></span>
+          <div class="game-quick">
+            <button type="button" data-scope="tonight">Tonight</button>
+            <button type="button" data-scope="next">Next game</button>
+            <button type="button" data-scope="week">All upcoming</button>
+          </div>
+          <div id="games" class="games"></div>
+        </div>
+
+        <details class="field wide more">
+          <summary>Fine-tune</summary>
+          <div class="toggles">
+            <label><input type="checkbox" id="props" checked> Player props</label>
+            <label><input type="checkbox" id="alts" checked> Alt spreads / totals</label>
+            <label><input type="checkbox" id="sgp" checked> Same-game legs</label>
+            <label><input type="checkbox" id="questionable"> Allow questionable players</label>
+            <label class="legs">Max legs <input type="range" id="maxlegs" min="1" max="10" value="6"><output id="maxlegs-out">6</output></label>
+          </div>
+        </details>
+
+        <button class="go" id="go" type="submit">Build my parlay</button>
+      </form>
+    </section>
+
+    <section id="results" class="results" aria-live="polite"></section>
+  </main>
+
+  <footer class="foot">
+    <p><strong>Read this before you bet.</strong> Every ticket here has a negative expected value — the sportsbook keeps a cut of every leg, and parlays multiply that cut. The "real chance" shown is the market's own estimate with the margin removed; it is not a prediction that beats the market. Injuries are pulled from ESPN and can lag late news. Same-game parlays are re-priced by the sportsbook, so the slip may show different odds. Prices move — always check the slip before you place it.</p>
+    <p>21+ and physically in a legal state only. Gambling problem? Call <a id="helpline" href="tel:18004262537">1-800-GAMBLER</a>. Not affiliated with DraftKings or FanDuel.</p>
+  </footer>
+
+  <template id="ticket-tpl">
+    <article class="ticket">
+      <header class="t-head">
+        <div class="t-rank"></div>
+        <div class="t-odds"><span class="t-american"></span><span class="t-book"></span></div>
+      </header>
+      <div class="t-pay">
+        <div><span class="k">Bet</span><span class="v t-stake"></span></div>
+        <div><span class="k">Pays</span><span class="v t-payout"></span></div>
+        <div class="chance"><span class="k">Real chance</span><span class="v t-chance"></span></div>
+      </div>
+      <div class="t-meter"><div class="bar"><span class="fill"></span></div><span class="t-meter-label"></span></div>
+      <ol class="t-legs"></ol>
+      <ul class="t-warn"></ul>
+      <div class="t-actions">
+        <a class="btn primary t-open" target="_blank" rel="noopener"></a>
+        <button type="button" class="btn t-share">Share</button>
+        <button type="button" class="btn ghost t-why">Why these?</button>
+      </div>
+      <div class="t-why-body" hidden></div>
+    </article>
+  </template>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>
