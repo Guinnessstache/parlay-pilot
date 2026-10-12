@@ -275,10 +275,16 @@ export function betslipLink(book, legs, cfg) {
     }
   }
   if (book === 'draftkings') {
-    const outs = legs.map(l => l.sid || (l.link && new URL(l.link).searchParams.get('outcomes'))).filter(Boolean);
-    const evSid = legs.find(l => l.eventSid)?.eventSid;
-    if (outs.length === legs.length && evSid) {
-      return { url: `${cfg.draftkingsHost}/event/${encodeURIComponent(evSid)}?outcomes=${outs.map(encodeURIComponent).join('+')}`, complete: true };
+    // The Odds API returns DK outcome links as https://sportsbook.draftkings.com/?outcomes=0ML84695534_3
+    // Multiple selections are joined with '+' in the same parameter.
+    const outs = legs.map(l => {
+      if (l.link && l.link.includes('outcomes=')) {
+        try { return new URL(l.link).searchParams.get('outcomes'); } catch { /* fall through */ }
+      }
+      return l.sid;
+    }).filter(Boolean);
+    if (outs.length === legs.length) {
+      return { url: `${cfg.draftkingsHost}/?outcomes=${outs.map(encodeURIComponent).join('+')}`, complete: true };
     }
   }
   // fallback: deepest link we have for the first leg
