@@ -239,11 +239,31 @@ function renderTicket(t, q, title, opts = {}) {
   if (opts.extraWarnings) w.push(...opts.extraWarnings);
   warn.innerHTML = w.map(x => `<li>${esc(x)}</li>`).join('');
 
-  const link = betslipLink(q.book, t.legs.filter(l => !l.gone), CONFIG);
+  const live = t.legs.filter(l => !l.gone);
+  const link = betslipLink(q.book, live, CONFIG);
   const open = node.querySelector('.t-open');
   open.href = link.url;
   open.textContent = link.complete ? `Open in ${BOOK_NAMES[q.book]}` : `Go to ${BOOK_NAMES[q.book]}`;
   if (!link.complete) open.title = 'This book did not return bet-slip IDs for every leg — add them using the "open leg" links.';
+
+  // DraftKings only accepts one pick per link (verified), but its slip keeps earlier picks,
+  // so multi-leg tickets get one button per leg, clicked in order.
+  if (q.book === 'draftkings' && live.length > 1) {
+    open.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 't-steps';
+    wrap.innerHTML = `<span class="t-steps-label">Add to DraftKings — tap each leg in order (slip keeps them):</span>`;
+    live.forEach((l, i) => {
+      const a = document.createElement('a');
+      a.className = 'btn primary step';
+      a.target = '_blank'; a.rel = 'noopener';
+      a.href = betslipLink('draftkings', [l], CONFIG).url;
+      a.textContent = `${i + 1}. ${l.label}`;
+      a.addEventListener('click', () => { a.classList.add('done'); a.textContent = `✓ ${l.label}`; });
+      wrap.appendChild(a);
+    });
+    node.querySelector('.t-actions').before(wrap);
+  }
 
   node.querySelector('.t-share').addEventListener('click', () => shareTicket(t, q));
   const whyBtn = node.querySelector('.t-why'), why = node.querySelector('.t-why-body');

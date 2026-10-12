@@ -56,7 +56,7 @@ function devigMarket(mkt, market) {
       g.forEach((o, i) => { out[outcomeKey(mkt, o)] = imp[i] / sum; });
     } else {
       // one-sided market (e.g. anytime TD "Yes"): assume a typical margin
-      const margin = isProp(mkt) ? 1.10 : 1.05;
+      const margin = isProp(mkt) ? 1.20 : 1.06; // one-sided markets (anytime TD) carry ~20% hold
       g.forEach((o, i) => { out[outcomeKey(mkt, o)] = imp[i] / margin; });
     }
   }

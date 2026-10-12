@@ -156,3 +156,7 @@ main { max-width: 920px; margin: 0 auto; padding: 0 16px 40px; }
   .t-pay .chance { grid-column: 1 / -1; }
   #prompt { font-size: 16px; }
 }
+.t-steps { display: flex; flex-direction: column; gap: 8px; padding: 14px 18px 0 22px; }
+.t-steps-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.t-steps .step { justify-content: flex-start; text-align: left; }
+.t-steps .step.done { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
