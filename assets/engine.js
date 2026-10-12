@@ -165,6 +165,15 @@ export function buildLegs(data, injuriesList, opts) {
         // Recent form: shown always; nudges the probability only when useForm is on.
         leg.pMarket = leg.p;
         leg.form = stats ? legForm(leg, stats, evById.get(ev.id)) : null;
+        // Player props need evidence: at least 2 recent games and an actual role in them.
+        // (Skipped only when stats loaded at all, so a failed ESPN pull doesn't wipe out every prop.)
+        if (isProp(mkt) && stats?.players) {
+          const sp = stats.players[normName(o.d)];
+          const g = (sp?.games || []).slice(0, 5);
+          const used = g.filter(x => x.car + x.tgt + (x.py > 0 ? 1 : 0) > 0).length;
+          if (g.length < 2) { excluded.push({ leg, why: `${o.d}: no recent game data`, kind: 'nodata' }); continue; }
+          if (used === 0) { excluded.push({ leg, why: `${o.d}: no touches or targets in last ${g.length} games`, kind: 'nodata' }); continue; }
+        }
         if (useForm && leg.form && leg.form.n >= 2) leg.p = blendForm(leg.pMarket, leg.form);
         // Prices that disagree wildly with every other book are usually stale or mismatched lines.
         if (leg.ev > 0.25) { excluded.push({ leg, why: 'price looks stale vs. other books' }); continue; }

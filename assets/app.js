@@ -241,6 +241,8 @@ function generate(q) {
   if (widened) notes.push(`<div class="notice">Nothing landed right on your number, so these are the closest tickets available.</div>`);
   if (q.target > 50) notes.push(`<div class="notice info">At ${fmtAmerican(q.target)} the best realistic ticket hits about ${oneIn(tickets[0].p)} times. These are the cheapest-priced ways to get there, not likely winners.</div>`);
   const outCount = excluded.filter(e => /listed/.test(e.why)).length;
+  const noData = [...new Set(excluded.filter(e => e.kind === 'nodata').map(e => e.leg.desc))].filter(n => !/D\/ST|Defense/.test(n));
+  if (noData.length) notes.push(`<div class="notice info">Left out ${noData.length} player${noData.length > 1 ? 's' : ''} with no recent game data or no role in recent games: ${noData.slice(0, 5).map(esc).join(', ')}${noData.length > 5 ? '…' : ''}.</div>`);
   if (outCount) notes.push(`<div class="notice">Skipped ${outCount} prop line${outCount > 1 ? 's' : ''} on injured players (${[...new Set(excluded.filter(e => /listed/.test(e.why)).map(e => e.why))].slice(0, 3).map(esc).join('; ')}${outCount > 3 ? '…' : ''}).</div>`);
 
   res.innerHTML = header + notes.join('');
