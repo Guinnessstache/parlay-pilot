@@ -395,7 +395,7 @@ function trackTicket(t, q, { practice = false, quiet = false } = {}) {
 }
 function untrack(key) { storeMine(loadMine().filter(x => x.key !== key)); }
 function updateMineCount() {
-  const n = loadMine().length;
+  const n = loadMine().filter(x => x.result !== 'lost').length;
   $('#mine-count').textContent = n ? `(${n})` : '';
 }
 function openMine() {
@@ -447,7 +447,10 @@ function renderMine() {
     <div><span class="k">Returned</span><span class="v">${money(T.returned)}</span></div>
     <div><span class="k">Net</span><span class="v ${T.net >= 0 ? 'pos' : 'neg'}">${T.net >= 0 ? '+' : '−'}${money(Math.abs(T.net))}</span></div>
     <p class="mine-sub">${mineSub(T)}</p>` : '';
-  $('#mine-list').innerHTML = list.length ? list.map(x => `
+  // lost tickets drop out of the list (they still count in the record above)
+  const lostN = list.filter(x => x.result === 'lost').length;
+  const shown = mineShowLost ? list : list.filter(x => x.result !== 'lost');
+  $('#mine-list').innerHTML = shown.length ? shown.map(x => `
     <article class="mine-item ${x.result || ''}" data-key="${esc(x.key)}" data-book="${esc(x.book)}">
       <header>
         <span class="mi-odds">${fmtAmerican(x.dec)}</span>
@@ -460,7 +463,8 @@ function renderMine() {
         <span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
       <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
         <span>${x.scanned ? '<button type="button" class="linkish mi-edit">Change games</button> ' : ''}<button type="button" class="btn ghost mi-remove">Remove</button></span></footer>
-    </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
+    </article>`).join('') : list.length ? '<p class="muted">No open or winning tickets right now.</p>' : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
+  renderLostToggle(lostN);
   $('#mine-list').querySelectorAll('.mi-edit').forEach(b => b.addEventListener('click', () => {
     const card = b.closest('.mine-item');
     const show = card.querySelector('.mi-fixwrap')?.hidden;
@@ -491,6 +495,14 @@ function renderMine() {
   gradeMine();
 }
 
+var mineShowLost = false;
+function renderLostToggle(n) {
+  let el = $('#mine-lost');
+  if (!el) { el = document.createElement('p'); el.id = 'mine-lost'; el.className = 'muted mine-lost'; $('#mine-list').after(el); }
+  el.innerHTML = n ? `<button type="button" class="linkish">${mineShowLost ? `Hide lost tickets` : `Show ${n} lost ticket${n > 1 ? 's' : ''}`}</button>` : '';
+  el.querySelector('button')?.addEventListener('click', () => { mineShowLost = !mineShowLost; renderMine(); });
+}
+
 async function gradeMine() {
   clearTimeout(gradeMine.t);
   if ($('#mine').hidden) return;
@@ -498,6 +510,7 @@ async function gradeMine() {
   let anyLive = false, changed = false;
   for (const x of list) {
     const card = $('#mine-list').querySelector(`.mine-item[data-key="${CSS.escape(x.key)}"]`);
+    if (!card && x.result === 'lost') continue; // hidden and settled: nothing to check
     const res = [];
     for (let i = 0; i < x.legs.length; i++) {
       const l = x.legs[i];
@@ -546,6 +559,11 @@ async function gradeMine() {
     }
   }
   if (changed) { storeMine(list); renderMineHeader(list); }
+  if (!mineShowLost) {
+    const gone = list.filter(x => x.result === 'lost');
+    gone.forEach(x => $('#mine-list').querySelector(`.mine-item[data-key="${CSS.escape(x.key)}"]`)?.remove());
+    if (gone.length) { renderLostToggle(gone.length); if (!$('#mine-list .mine-item')) $('#mine-list').innerHTML = '<p class="muted">No open or winning tickets right now.</p>'; }
+  }
   if (anyLive) gradeMine.t = setTimeout(gradeMine, 30000);
 }
 function renderMineHeader(list) {

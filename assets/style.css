@@ -312,3 +312,4 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .mine-item header .mi-meta { grid-row: 1 / span 2; }
 .mine-item header .mi-status { grid-row: 1; }
 .mine-item header .mi-score { grid-column: 1 / -1; grid-row: 3; flex-direction: row; justify-content: flex-end; margin-top: 4px; }
+.mine-lost { text-align: center; margin: 10px 0 0; }
