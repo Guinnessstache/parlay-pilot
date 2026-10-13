@@ -280,3 +280,6 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .mi-amounts { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 8px 0; font-size: 13px; color: var(--muted); }
 .mi-amounts input { width: 90px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; color: var(--text); font-family: var(--mono); }
 .mi-amounts .btn { padding: 5px 10px; font-size: 12px; }
+
+.sc-amt { font-size: 13px; color: var(--muted); align-self: center; }
+.sc-amt b { color: var(--text); font-family: var(--mono); font-size: 15px; margin-left: 2px; }

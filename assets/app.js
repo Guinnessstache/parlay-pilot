@@ -454,31 +454,17 @@ function renderMine() {
         <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}${x.scanned ? ' · 📷 scanned' : ''}</span>
         <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
       </header>
-      ${x.scanned ? `<div class="mi-amounts" hidden>
-        <label>Wager $<input type="number" step="0.01" class="mi-stake" value="${x.stake}"></label>
-        <label>Payout $<input type="number" step="0.01" class="mi-pay" value="${(x.stake * x.dec).toFixed(2)}"></label>
-        <button type="button" class="btn mi-save-amt">Save amounts</button>
-      </div>` : ''}
       <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span>
         <span class="mi-game muted">${l.home ? `${esc(l.away)} @ ${esc(l.home)} · ${esc(dayFmt.format(new Date(l.start)))}` : 'No game set'}${x.scanned ? `<span class="mi-fixwrap" hidden> · <button type="button" class="linkish mi-fix" data-i="${i}">change game</button></span>` : ''}</span>
         <span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
       <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
-        <span>${x.scanned ? '<button type="button" class="linkish mi-edit">Edit</button> ' : ''}<button type="button" class="btn ghost mi-remove">Remove</button></span></footer>
+        <span>${x.scanned ? '<button type="button" class="linkish mi-edit">Change games</button> ' : ''}<button type="button" class="btn ghost mi-remove">Remove</button></span></footer>
     </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
   $('#mine-list').querySelectorAll('.mi-edit').forEach(b => b.addEventListener('click', () => {
     const card = b.closest('.mine-item');
     const show = card.querySelector('.mi-fixwrap')?.hidden;
     card.querySelectorAll('.mi-fixwrap').forEach(w => (w.hidden = !show));
-    const amt = card.querySelector('.mi-amounts'); if (amt) amt.hidden = !show;
-    b.textContent = show ? 'Done' : 'Edit';
-  }));
-  $('#mine-list').querySelectorAll('.mi-save-amt').forEach(b => b.addEventListener('click', () => {
-    const card = b.closest('.mine-item');
-    const stake = parseFloat(card.querySelector('.mi-stake').value), pay = parseFloat(card.querySelector('.mi-pay').value);
-    if (!(stake > 0) || !(pay > 0)) { toast('Enter both amounts'); return; }
-    const list = loadMine(), x = list.find(t => t.key === card.dataset.key);
-    x.stake = stake; x.dec = pay / stake;
-    storeMine(list); renderMine(); toast('Amounts updated');
+    b.textContent = show ? 'Done' : 'Change games';
   }));
   $('#mine-list').querySelectorAll('.mi-fix').forEach(b => b.addEventListener('click', () => {
     const key = b.closest('.mine-item').dataset.key, i = +b.dataset.i;
@@ -630,6 +616,17 @@ async function scanFiles(files) {
     }
   }
 }
+
+// amounts come straight off the slip; only ask when the slip didn't show one
+function amountField(id, label, v) {
+  return v != null && v > 0
+    ? `<span class="sc-amt" id="${id}" data-v="${v}">${label} <b>${money(v)}</b></span>`
+    : `<label>${label} $<input id="${id}" type="number" step="0.01" placeholder="not found"></label>`;
+}
+function readAmount(box, sel) {
+  const el = box.querySelector(sel);
+  return el?.dataset?.v ? parseFloat(el.dataset.v) : parseFloat(el?.value);
+}
 function reviewScan(text, thumb) {
   return new Promise(done => {
     const box = $('#scan');
@@ -646,8 +643,8 @@ function reviewScan(text, thumb) {
             <h3>Check what we read</h3>
             <div class="scan-row">
               <label>Book <select id="sc-book"><option value="draftkings" ${book === 'draftkings' ? 'selected' : ''}>DraftKings</option><option value="fanduel" ${book === 'fanduel' ? 'selected' : ''}>FanDuel</option></select></label>
-              <label>Wager $<input id="sc-stake" type="number" step="0.01" value="${r.stake ?? ''}"></label>
-              <label>Payout $<input id="sc-pay" type="number" step="0.01" value="${r.payout ?? (r.stake && r.dec ? (r.stake * r.dec).toFixed(2) : '')}"></label>
+              ${amountField('sc-stake', 'Wager', r.stake)}
+              ${amountField('sc-pay', 'Payout', r.payout ?? (r.stake && r.dec ? +(r.stake * r.dec).toFixed(2) : null))}
             </div>
             ${r.legs.length ? `<ol class="scan-legs">${r.legs.map((l, i) => `
               <li data-i="${i}"><label><input type="checkbox" checked> <b>${esc(l.label)}</b></label>
@@ -665,7 +662,7 @@ function reviewScan(text, thumb) {
       box.querySelector('#sc-reread').addEventListener('click', render);
       box.querySelector('#sc-cancel').addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; done(); });
       box.querySelector('#sc-save').addEventListener('click', () => {
-        const stake = parseFloat(box.querySelector('#sc-stake').value), pay = parseFloat(box.querySelector('#sc-pay').value);
+        const stake = readAmount(box, '#sc-stake'), pay = readAmount(box, '#sc-pay');
         const legs = [];
         box.querySelectorAll('.scan-legs li').forEach(li => {
           if (!li.querySelector('input[type=checkbox]').checked) return;
