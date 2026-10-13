@@ -94,6 +94,18 @@ function parsePrompt(text) {
   if (/fan\s?duel|\bfd\b/.test(t)) out.book = 'fanduel';
   if (/draft\s?kings|\bdk\b/.test(t)) out.book = 'draftkings';
   out.props = !/no (?:player )?props|without props|game lines only/.test(t);  // each request resets it
+  // bet types: "no moneyline", "no spreads", "no ML or spreads", "props only", "totals and props only"
+  const only = t.match(/\b((?:(?:props?|totals?|spreads?|moneylines?|ml)(?:\s*(?:,|and|&|\+|or)\s*)?)+)\s+only\b|\bonly\s+((?:(?:props?|totals?|spreads?|moneylines?|ml)(?:\s*(?:,|and|&|\+|or)\s*)?)+)/);
+  if (only) {
+    const w = only[1] || only[2];
+    out.ml = /moneyline|\bml\b/.test(w); out.spreads = /spread/.test(w); out.totals = /total/.test(w); out.props = /prop/.test(w);
+  } else {
+    const neg = t.match(/\b(?:no|without|skip|exclude)\s+((?:(?:the\s+)?(?:props?|totals?|spreads?|moneylines?|ml|alt(?:ernate)? lines?)(?:\s*(?:,|and|&|or|\/)\s*)?)+)/g) || [];
+    const n = neg.join(' ');
+    out.ml = !/moneyline|\bml\b/.test(n); out.spreads = !/spread/.test(n); out.totals = !/total/.test(n);
+    if (/prop/.test(n)) out.props = false;
+    out.alts = !/alt/.test(n);
+  }
   out.sgp = !/no same.?game|different games|no sgp/.test(t);
   // leg counts: "3-5 legs", "exactly 4 legs", "at least 4 legs", "4+ legs", "minimum 3 legs", "max 5 legs", "4 legs"
   const cap = n => Math.max(1, Math.min(CONFIG.maxLegsCap, n));
@@ -185,6 +197,8 @@ function applyParsed(p) {
   if (p.mode) $('#mode').value = p.mode;
   if (p.book) setBook(p.book);
   if (p.props != null) $('#props').checked = p.props;
+  for (const k of ['ml', 'spreads', 'totals', 'alts']) if (p[k] != null) $('#' + k).checked = p[k];
+  if (['ml', 'spreads', 'totals', 'props', 'alts'].some(k => p[k] === false)) $('.more').open = true;
   if (p.sgp != null) $('#sgp').checked = p.sgp;
   {
     // each request sets the leg range; unmentioned = default 1-6
@@ -209,6 +223,7 @@ function readForm() {
     target: mode === 'profit' ? 1 + win / stake : win / stake,
     games: [...state.selected],
     props: $('#props').checked, alts: $('#alts').checked, sgp: $('#sgp').checked,
+    ml: $('#ml').checked, spreads: $('#spreads').checked, totals: $('#totals').checked,
     questionable: $('#questionable').checked, form: $('#form-weight').checked, ...legRange()
   };
 }
@@ -220,7 +235,7 @@ function generate(q) {
   if (q.target < 1.05) { res.innerHTML = '<div class="notice bad">That payout is less than your bet back. Raise the "to win" amount.</div>'; return; }
   const eventIds = q.games.length ? q.games : null;
   const { legs, excluded } = buildLegs(state.data, state.injuries, {
-    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, allowQuestionable: q.questionable,
+    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, includeML: q.ml, includeSpreads: q.spreads, includeTotals: q.totals, allowQuestionable: q.questionable,
     stats: state.stats, useForm: q.form
   });
   const nGames = new Set(legs.map(l => l.eventId)).size;
@@ -237,12 +252,17 @@ function generate(q) {
     const chosen = (eventIds || upcoming().map(g => g.id)).map(id => state.data.events.find(e => e.id === id)).filter(Boolean);
     const thin = chosen.filter(e => Object.keys(e.books?.[q.book]?.m || {}).every(k => ['h2h', 'spreads', 'totals'].includes(k)));
     const best = (ev, keys) => Math.max(1, ...keys.flatMap(k => (ev.books?.[q.book]?.m?.[k]?.o || []).map(o => o.p)));
-    const maxDec = chosen.slice(0, q.maxLegs).reduce((a, e) => a * best(e, ['h2h', 'spreads']) * (q.sgp ? best(e, ['totals']) : 1), 1);
+    const sideKeys = [q.ml && 'h2h', q.spreads && 'spreads'].filter(Boolean);
+    const maxDec = chosen.slice(0, q.maxLegs).reduce((a, e) => {
+      const side = sideKeys.length ? best(e, sideKeys) : 1, tot = q.totals ? best(e, ['totals']) : 1;
+      return a * (q.sgp ? side * tot : Math.max(side, tot));
+    }, 1);
     const rich = upcoming().filter(e => Object.keys(e.books?.[q.book]?.m || {}).some(k => !['h2h', 'spreads', 'totals'].includes(k)));
     let msg = `Couldn't reach ${fmtAmerican(q.target)} from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}.`;
-    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} moneyline, spread and total posted so far — alt lines and player props load about 12 hours before kickoff. With just those, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
+    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines posted so far — alt lines and player props load about 12 hours before kickoff. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
     else if (q.minLegs > 1 && !q.sgp && q.minLegs > nGames) msg += ` A ${q.minLegs}-leg minimum with same-game legs off needs at least ${q.minLegs} games — pick more games or turn same-game legs on.`;
     else if (q.minLegs > 1) msg += ` With at least ${q.minLegs} legs, each leg has to be a short price — try lowering the minimum, adding games, or raising the target.`;
+    else if (!q.ml || !q.spreads || !q.totals || !q.props) msg += ` Some bet types are switched off (${[!q.ml && 'moneyline', !q.spreads && 'spreads', !q.totals && 'totals', !q.props && 'props'].filter(Boolean).join(', ')}) — turning one back on, adding games or changing the target will help.`;
     else msg += ' Try adding games, raising max legs, or lowering the target.';
     const fixes = [];
     if (rich.length && thin.length) fixes.push(`<button type="button" class="btn" data-fix="rich">Use ${rich.length === 1 ? `${esc(rich[0].away)} @ ${esc(rich[0].home)}` : `the ${rich.length} games with props`}</button>`);

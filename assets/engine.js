@@ -125,7 +125,7 @@ function slotOf(leg) {
 }
 
 export function buildLegs(data, injuriesList, opts) {
-  const { book, eventIds, includeProps = true, includeAlts = true, allowQuestionable = false, stats = null, useForm = true } = opts;
+  const { book, eventIds, includeProps = true, includeAlts = true, includeML = true, includeSpreads = true, includeTotals = true, allowQuestionable = false, stats = null, useForm = true } = opts;
   const evById = new Map(data.events.map(e => [e.id, e]));
   const cons = buildConsensus(data.events);
   const inj = indexInjuries(injuriesList);
@@ -137,6 +137,9 @@ export function buildLegs(data, injuriesList, opts) {
     for (const [mkt, market] of Object.entries(b.m || {})) {
       if (!includeProps && isProp(mkt)) continue;
       if (!includeAlts && mkt.startsWith('alternate_')) continue;
+      if (!includeML && mkt === 'h2h') continue;
+      if (!includeSpreads && isSpread(mkt)) continue;
+      if (!includeTotals && isTotal(mkt)) continue;
       if (!MARKET_LABEL[mkt]) continue;
       for (const o of market.o) {
         if (!(o.p > 1.01)) continue;
