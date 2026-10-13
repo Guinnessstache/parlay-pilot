@@ -329,7 +329,7 @@ async function gradePractice() {
       const ev = state.data.events.find(e => e.id === l.eventId);
       const r = ev ? await gradeLeg(l, ev, state.board) : { status: 'pending', text: '' };
       r.chance = ev ? await legChance(l, ev, state.board, l.pMarket ?? l.p) : null;
-      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind')) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
+      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind') && (/totals/.test(l.market) || l.market.startsWith('player_'))) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
       res.push(r);
       const g = ev && matchGame(ev, state.board);
       if (g?.state === 'in') anyLive = true;
@@ -507,7 +507,7 @@ async function gradeMine() {
       if (g?.state === 'in') anyLive = true;
       const r = await gradeLeg(l, ev, board);
       r.chance = await legChance(l, ev, board, prePFor(l));
-      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind')) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
+      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind') && (/totals/.test(l.market) || l.market.startsWith('player_'))) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
       res.push(r);
       const chip = card?.querySelector(`.grade[data-i="${i}"]`);
       if (chip) { chip.className = `grade ${r.status}`; chip.innerHTML = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + esc(r.text) : ''}${g && g.state !== 'pre' ? ` (${esc(g.detail)})` : ''}${r.chance != null && r.status !== 'won' && r.status !== 'lost' ? ` <b class="lc">${pctTxt(r.chance)}</b>` : ''}`; }

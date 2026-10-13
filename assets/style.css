@@ -305,3 +305,10 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .mi-score .sc-row { font-size: 13px; color: var(--muted); }
 .mi-score .sc-row b { color: var(--text); font-size: 16px; }
 .mi-score .live-dot { font-size: 9px; padding: 0 4px; }
+
+/* score badge gets its own row under the details so it never covers text */
+.mine-item header { grid-template-rows: auto auto auto; }
+.mine-item header .mi-odds { grid-row: 1 / span 2; }
+.mine-item header .mi-meta { grid-row: 1 / span 2; }
+.mine-item header .mi-status { grid-row: 1; }
+.mine-item header .mi-score { grid-column: 1 / -1; grid-row: 3; flex-direction: row; justify-content: flex-end; margin-top: 4px; }
