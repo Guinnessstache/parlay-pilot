@@ -32,9 +32,15 @@
         <h2>My tickets</h2>
         <button type="button" class="btn ghost" id="mine-close">Close</button>
       </div>
+      <div class="mine-add">
+        <label class="btn primary scan-btn">📷 Add from screenshot<input type="file" id="scan-file" accept="image/*" multiple hidden></label>
+        <button type="button" class="btn ghost" id="scan-paste">or paste slip text</button>
+        <button type="button" class="info" data-info="scan" aria-label="What is this?">i</button>
+      </div>
+      <div id="scan" class="scan" hidden></div>
       <div id="mine-totals" class="mine-totals"></div>
       <div id="mine-list" class="mine-list"></div>
-      <p class="muted mine-note">Saved on this device only. Tickets are added when you tap "Open in…" or "Track". Graded live from ESPN — no sportsbook login. Practice tickets are tracked but not counted in money totals.</p>
+      <p class="muted mine-note">Saved on this device only. Tickets are added when you tap "Open in…" or "Track", or from a screenshot of a slip. Graded live from ESPN — no sportsbook login. Practice tickets are tracked but not counted in money totals.</p>
     </section>
 
     <section class="ask" id="ask">

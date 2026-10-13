@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
 import { getScoreboard, getBoardFor, matchGame, gradeLeg } from './live.js';
+import { parseSlip } from './slipscan.js';
 import {
   BOOK_NAMES, MARKET_LABEL, buildLegs, findParlays, summarize, betslipLink,
   fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket
@@ -395,7 +396,7 @@ function mineTotals(list) {
   const pending = real.length - settled.length;
   const pr = list.filter(x => x.practice && x.result);
   return { n: real.length, settled: settled.length, won: won.length, staked, returned, net: returned - staked, pending,
-    expected: settled.reduce((a, x) => a + (x.p || 0), 0), prWon: pr.filter(x => x.result === 'won').length, prN: pr.length };
+    expected: settled.filter(x => x.p).reduce((a, x) => a + x.p, 0), withP: settled.filter(x => x.p).length, prWon: pr.filter(x => x.result === 'won').length, prN: pr.length };
 }
 
 function renderMine() {
@@ -411,10 +412,10 @@ function renderMine() {
     <article class="mine-item ${x.result || ''}" data-key="${esc(x.key)}" data-book="${esc(x.book)}">
       <header>
         <span class="mi-odds">${fmtAmerican(x.dec)}</span>
-        <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}</span>
+        <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}${x.scanned ? ' · 📷 scanned' : ''}</span>
         <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
       </header>
-      <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${fmtAmerican(l.dec)}</span><span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
+      <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span><span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
       <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
         <button type="button" class="btn ghost mi-remove">Remove</button></footer>
     </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
@@ -466,7 +467,122 @@ function renderMineHeader(list) {
   if (sub) sub.textContent = mineSub(T);
 }
 function mineSub(T) {
-  return `${T.pending ? `${T.pending} ticket${T.pending > 1 ? 's' : ''} still open. ` : ''}${T.settled ? `Expected wins at the odds: ${T.expected.toFixed(1)} of ${T.settled}. ` : ''}${T.prN ? `Practice: ${T.prWon} of ${T.prN} won.` : ''}`;
+  return `${T.pending ? `${T.pending} ticket${T.pending > 1 ? 's' : ''} still open. ` : ''}${T.withP ? `Expected wins at the odds: ${T.expected.toFixed(1)} of ${T.withP}. ` : ''}${T.prN ? `Practice: ${T.prWon} of ${T.prN} won.` : ''}`;
+}
+
+
+// ---------- add tickets from a screenshot (OCR runs on this device) ----------
+const TESS_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js';
+let tessWorker = null;
+function loadScript(src) {
+  return new Promise((ok, bad) => { if (window.Tesseract) return ok(); const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = () => bad(new Error('Could not load the text reader')); document.head.appendChild(el); });
+}
+async function getWorker(onProgress) {
+  await loadScript(TESS_URL);
+  if (!tessWorker) tessWorker = await window.Tesseract.createWorker('eng', 1, { logger: m => m.status === 'recognizing text' && onProgress?.(m.progress) });
+  return tessWorker;
+}
+// upscale small screenshots, grayscale, flip dark-mode slips to dark-on-light, stretch contrast
+async function prepImage(file) {
+  const img = await createImageBitmap(file);
+  const scale = img.width < 1000 ? 2 : 1;
+  const c = document.createElement('canvas');
+  c.width = img.width * scale; c.height = img.height * scale;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height), px = d.data;
+  let sum = 0;
+  for (let i = 0; i < px.length; i += 4) { const y = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]; px[i] = px[i + 1] = px[i + 2] = y; sum += y; }
+  const dark = sum / (px.length / 4) < 110;
+  for (let i = 0; i < px.length; i += 4) { let y = px[i]; if (dark) y = 255 - y; y = Math.max(0, Math.min(255, (y - 128) * 1.4 + 128)); px[i] = px[i + 1] = px[i + 2] = y; }
+  g.putImageData(d, 0, 0);
+  return c;
+}
+function scanContext() {
+  const games = [...state.data.events.map(e => ({ home: e.home, away: e.away, start: e.start })),
+    ...(state.board || []).map(g => ({ home: g.home, away: g.away, start: g.start }))];
+  const seen = new Set();
+  const uniq = games.filter(g => { const k = `${g.home}|${g.away}|${g.start?.slice(0, 10)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const players = [
+    ...Object.values(state.stats?.players || {}).map(p => ({ name: p.name, team: p.team })),
+    ...state.data.events.flatMap(e => Object.values(e.books || {}).flatMap(b => Object.entries(b.m || {}).filter(([k]) => k.startsWith('player_')).flatMap(([, m]) => m.o.map(o => ({ name: o.d }))))).filter(p => p.name)
+  ];
+  return { games: uniq, teams: state.stats?.teams || {}, players };
+}
+async function scanFiles(files) {
+  const box = $('#scan');
+  box.hidden = false;
+  for (const f of files) {
+    box.innerHTML = `<p class="scan-status">Reading ${esc(f.name || 'screenshot')}… <span id="scan-pct">0%</span><br><span class="muted">First time loads the text reader (~5 MB). Your image stays on this device.</span></p>`;
+    try {
+      const w = await getWorker(p => { const el = $('#scan-pct'); if (el) el.textContent = `${Math.round(p * 100)}%`; });
+      const canvas = await prepImage(f);
+      const { data } = await w.recognize(canvas);
+      await reviewScan(data.text, URL.createObjectURL(f));
+    } catch (e) {
+      box.innerHTML = `<div class="notice bad">Couldn't read that image (${esc(e.message)}). You can paste the slip text instead.</div>`;
+      return;
+    }
+  }
+}
+function reviewScan(text, thumb) {
+  return new Promise(done => {
+    const box = $('#scan');
+    const ctx = scanContext();
+    const gameOpts = ctx.games.sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+      .map((g, i) => `<option value="${i}">${esc(g.away)} @ ${esc(g.home)} · ${esc(dayFmt.format(new Date(g.start)))}</option>`).join('');
+    const render = () => {
+      const r = parseSlip(box.querySelector('textarea')?.value ?? text, ctx);
+      const book = r.book || state.book;
+      box.innerHTML = `
+        <div class="scan-grid">
+          ${thumb ? `<img class="scan-thumb" src="${thumb}" alt="Your screenshot">` : ''}
+          <div class="scan-body">
+            <h3>Check what we read</h3>
+            <div class="scan-row">
+              <label>Book <select id="sc-book"><option value="draftkings" ${book === 'draftkings' ? 'selected' : ''}>DraftKings</option><option value="fanduel" ${book === 'fanduel' ? 'selected' : ''}>FanDuel</option></select></label>
+              <label>Wager $<input id="sc-stake" type="number" step="0.01" value="${r.stake ?? ''}"></label>
+              <label>Payout $<input id="sc-pay" type="number" step="0.01" value="${r.payout ?? (r.stake && r.dec ? (r.stake * r.dec).toFixed(2) : '')}"></label>
+            </div>
+            ${r.legs.length ? `<ol class="scan-legs">${r.legs.map((l, i) => `
+              <li data-i="${i}"><label><input type="checkbox" checked> <b>${esc(l.label)}</b></label>
+                ${l.game ? `<span class="muted">${esc(l.game)}</span>` : `<select class="sc-game"><option value="">Which game?</option>${gameOpts}</select>`}</li>`).join('')}</ol>`
+              : '<div class="notice">No legs recognised. Fix the text below (one leg per line works best, e.g. "Bills -3.5", "Over 44.5", "Dawson Knox anytime TD") and tap Re-read.</div>'}
+            <details class="scan-text"><summary>Text we read (edit if something's wrong)</summary>
+              <textarea rows="8">${esc(box.querySelector('textarea')?.value ?? text)}</textarea>
+              <button type="button" class="btn" id="sc-reread">Re-read text</button></details>
+            <div class="scan-actions">
+              <button type="button" class="btn primary" id="sc-save" ${r.legs.length ? '' : 'disabled'}>Save ticket</button>
+              <button type="button" class="btn ghost" id="sc-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>`;
+      box.querySelector('#sc-reread').addEventListener('click', render);
+      box.querySelector('#sc-cancel').addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; done(); });
+      box.querySelector('#sc-save').addEventListener('click', () => {
+        const stake = parseFloat(box.querySelector('#sc-stake').value), pay = parseFloat(box.querySelector('#sc-pay').value);
+        const legs = [];
+        box.querySelectorAll('.scan-legs li').forEach(li => {
+          if (!li.querySelector('input[type=checkbox]').checked) return;
+          const l = { ...r.legs[+li.dataset.i] };
+          const sel = li.querySelector('.sc-game');
+          if (sel) { const g = ctx.games[+sel.value]; if (!g) return; Object.assign(l, { home: g.home, away: g.away, start: g.start, game: `${g.away} @ ${g.home}` }); }
+          legs.push({ id: `scan|${l.market}|${l.name}|${l.desc || ''}|${l.point ?? ''}`, market: l.market, name: l.name, desc: l.desc, point: l.point, dec: null, label: l.label, home: l.home, away: l.away, start: l.start });
+        });
+        if (!legs.length) { toast('Tick at least one leg (and pick its game)'); return; }
+        if (!(stake > 0)) { toast('Enter the wager'); return; }
+        const list = loadMine();
+        list.unshift({ key: `scan-${Date.now()}`, savedAt: new Date().toISOString(), book: box.querySelector('#sc-book').value, stake,
+          dec: pay > 0 ? pay / stake : (r.dec || 1), p: null, practice: false, scanned: true, legs, result: null });
+        storeMine(list.slice(0, 200));
+        toast(`Saved ${legs.length}-leg ticket`);
+        box.hidden = true; box.innerHTML = '';
+        renderMine();
+        done();
+      });
+    };
+    render();
+  });
 }
 
 // ---------- ticket rendering ----------
@@ -643,6 +759,7 @@ const INFO = {
   questionable: 'By default, props on players listed Questionable are skipped (Out / Doubtful / IR are always skipped). Turn this on to allow Questionable players — the leg will be flagged.',
   form: 'On: each leg\'s chance is nudged toward how often that bet hit in the player\'s/team\'s recent games. Example: Knox anytime TD is ~15% by the odds; he scored in 2 of his last 5 (40%), so it becomes ~16–17% — not 40%. Five games is little evidence and the odds already account for form, so the nudge is capped at ±35% of the market\'s number. It mostly breaks ties between similar legs. Off: odds only.',
   practice: 'Practice mode: include games that have already kicked off. Tickets are built from the last pre-kickoff prices, can\'t be placed (no sportsbook button), and every leg is graded live from ESPN — ✓ won, ✗ lost, ▲ on track, ▼ behind — updating every 30 seconds. Use it to see how the picks would have done. You can also type "practice" or "live" in the box.',
+  scan: 'Add a bet you placed in the DraftKings or FanDuel app: upload a screenshot of the slip (My Bets → the ticket). The text is read on your phone — the image is never uploaded anywhere. You then check what was read (legs, wager, payout), fix anything, and save. It\'s tracked and graded live like any other ticket. Tip: crop to just the one ticket for best results.',
   legs: 'Minimum and maximum number of legs on a ticket. Useful for app promos that need e.g. 4+ legs for a profit boost. More legs = more house cut, so a minimum usually lowers your real chance a bit. You can also type "at least 4 legs" or "3-5 legs" in the box above.',
   payout: 'What the sportsbook pays back if every leg wins, stake included, at the prices when the odds were last updated. Check the slip — prices move.',
   chance: 'How likely the whole ticket is to win, from about 10 sportsbooks\' odds with their cut removed (and nudged by recent form if that option is on). "1 in 95" means it would win about once every 95 tries.',
@@ -691,6 +808,8 @@ async function boot() {
   $('#mine-btn').addEventListener('click', () => $('#mine').hidden ? openMine() : ($('#mine').hidden = true));
   $('#mine-close').addEventListener('click', () => { $('#mine').hidden = true; });
   if (/[?&#]mine\b/.test(location.href)) openMine();
+  $('#scan-file').addEventListener('change', e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) scanFiles(f); });
+  $('#scan-paste').addEventListener('click', () => { $('#scan').hidden = false; reviewScan('', null); $('#scan details').open = true; $('#scan textarea').focus(); });
   $('#practice').addEventListener('change', () => { selectScope($('#practice').checked ? 'live' : 'tonight'); });
 
   document.querySelectorAll('#book button').forEach(b => b.addEventListener('click', () => { setBook(b.dataset.v); renderGames(); }));

@@ -39,6 +39,10 @@ Each refresh also pulls ESPN's public stats (free, no key): every team's results
 
 Fine-tune → "Practice: include games in progress", or type "practice" or "live" in the box. This lets you build tickets on games that have already kicked off, using the last pre-kickoff prices. These tickets can't be placed: the sportsbook button is replaced with "Practice only". Every leg is graded live from ESPN's public scoreboard and box score (✓ won / ✗ lost / ▲ on track / ▼ behind), refreshing every 30 seconds while the game is on. It's a way to see how the picks would have done. It costs no Odds API credits.
 
+## My tickets + screenshot import
+
+My tickets (top right) keeps the tickets you track on this device and grades them live from ESPN, along with your record and net. To add bets placed directly in the DraftKings or FanDuel app, use "📷 Add from screenshot". Text recognition runs in the browser (tesseract.js 6.0.1 from jsDelivr, about 5 MB on first use), so the image is never uploaded. `assets/slipscan.js` turns the text into legs: spreads, moneylines, totals, anytime TDs, and over/under or "80+" yardage props. It matches them against this week's games and players, and you review everything before saving. You can also paste the slip text instead of uploading an image.
+
 ## Bet-slip links: test these first
 
 | Book | Format used | Status |
