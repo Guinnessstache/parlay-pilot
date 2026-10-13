@@ -416,7 +416,7 @@ export function explainTicket(t, ctx = {}) {
   }
   const mkt = legs.reduce((a, l) => a * (l.pMarket ?? l.p), 1);
   const formMoved = Math.abs(t.p - mkt) / mkt > 0.03;
-  parts.push(`Overall: about ${pc(t.p)} to cash (1 in ${Math.round(1 / t.p)})${formMoved ? ` — the betting market alone says ${pc(mkt)}, recent form ${t.p > mkt ? 'nudges it up' : 'nudges it down'}` : ''}.`);
+  parts.push(`Overall: about ${pc(t.p)} to cash (1 in ${t.p > 0.5 ? (1 / t.p).toFixed(1) : Math.round(1 / t.p).toLocaleString()})${formMoved ? ` — the betting market alone says ${pc(mkt)}, recent form ${t.p > mkt ? 'nudges it up' : 'nudges it down'}` : ''}.`);
 
   const teams = new Set(legs.flatMap(l => { const e = events.find(x => x.id === l.eventId); return e ? [e.home, e.away] : []; }));
   const keyOut = injuries.filter(i => teams.has(i.team) && /out|doubtful|reserve/i.test(i.status) && ['QB', 'RB', 'WR', 'TE'].includes(i.pos));
