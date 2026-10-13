@@ -415,10 +415,30 @@ function renderMine() {
         <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}${x.scanned ? ' · 📷 scanned' : ''}</span>
         <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
       </header>
-      <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span><span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
+      <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span>
+        <span class="mi-game muted">${l.home ? `${esc(l.away)} @ ${esc(l.home)} · ${esc(dayFmt.format(new Date(l.start)))}` : 'No game set'}${x.scanned ? ` · <button type="button" class="linkish mi-fix" data-i="${i}">wrong game?</button>` : ''}</span>
+        <span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
       <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
         <button type="button" class="btn ghost mi-remove">Remove</button></footer>
     </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
+  $('#mine-list').querySelectorAll('.mi-fix').forEach(b => b.addEventListener('click', () => {
+    const key = b.closest('.mine-item').dataset.key, i = +b.dataset.i;
+    const games = sortedGames(scanContext().games);
+    const sel = document.createElement('select');
+    sel.className = 'sc-game';
+    sel.innerHTML = '<option value="">Pick the game…</option>' + games.map((g, k) => `<option value="${k}">${esc(gameLabel(g))}</option>`).join('');
+    b.replaceWith(sel);
+    sel.focus();
+    sel.addEventListener('change', () => {
+      const g = games[+sel.value]; if (!g) return;
+      const list = loadMine(), x = list.find(t => t.key === key);
+      // a same-game parlay: move every leg that was on the old game
+      const old = `${x.legs[i].home}|${x.legs[i].away}|${x.legs[i].start}`;
+      x.legs.forEach(l => { if (`${l.home}|${l.away}|${l.start}` === old || !l.home || l === x.legs[i]) Object.assign(l, { home: g.home, away: g.away, start: g.start }); });
+      x.result = null;
+      storeMine(list); renderMine(); toast('Game updated');
+    });
+  }));
   $('#mine-list').querySelectorAll('.mi-remove').forEach(b => b.addEventListener('click', () => {
     untrack(b.closest('.mine-item').dataset.key); renderMine();
   }));
@@ -442,7 +462,7 @@ async function gradeMine() {
       const r = await gradeLeg(l, ev, board);
       res.push(r);
       const chip = card?.querySelector(`.grade[data-i="${i}"]`);
-      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + r.text : ''}${g && g.state === 'in' ? ` (${g.detail})` : ''}`; }
+      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + r.text : ''}${g && g.state !== 'pre' ? ` (${g.detail})` : ''}`; }
     }
     const result = res.some(r => r.status === 'lost') ? 'lost' : res.length && res.every(r => r.status === 'won') ? 'won' : null;
     if (result !== x.result) { x.result = result; changed = true; }
@@ -509,6 +529,17 @@ function scanContext() {
   ];
   return { games: uniq, teams: state.stats?.teams || {}, players };
 }
+
+// games for pickers: in progress first, then upcoming by kickoff, then finished (most recent first)
+function gameState(g) { return matchGame(g, state.board)?.state || (Date.parse(g.start) > Date.now() ? 'pre' : 'post'); }
+function sortedGames(games) {
+  const rank = g => ({ in: 0, pre: 1, post: 2 })[gameState(g)] ?? 1;
+  return [...games].sort((a, b) => rank(a) - rank(b) || (rank(a) === 2 ? Date.parse(b.start) - Date.parse(a.start) : Date.parse(a.start) - Date.parse(b.start)));
+}
+function gameLabel(g) {
+  const st = gameState(g), b = matchGame(g, state.board);
+  return `${g.away} @ ${g.home} · ${st === 'in' ? `LIVE ${b?.detail || ''}` : st === 'post' ? `Final · ${dayFmt.format(new Date(g.start))}` : dayFmt.format(new Date(g.start))}`;
+}
 async function scanFiles(files) {
   const box = $('#scan');
   box.hidden = false;
@@ -529,8 +560,8 @@ function reviewScan(text, thumb) {
   return new Promise(done => {
     const box = $('#scan');
     const ctx = scanContext();
-    const gameOpts = ctx.games.sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
-      .map((g, i) => `<option value="${i}">${esc(g.away)} @ ${esc(g.home)} · ${esc(dayFmt.format(new Date(g.start)))}</option>`).join('');
+    ctx.games = sortedGames(ctx.games);
+    const gameOpts = ctx.games.map((g, i) => `<option value="${i}">${esc(gameLabel(g))}</option>`).join('');
     const render = () => {
       const r = parseSlip(box.querySelector('textarea')?.value ?? text, ctx);
       const book = r.book || state.book;

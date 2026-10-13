@@ -115,11 +115,14 @@ export function parseSlip(raw, ctx) {
       if (g) headers.push({ i, g });
     }
   });
+  let lastHeaderDist = null;
   const nearestGame = i => {
     if (!headers.length) return null;
     // prefer the next header at/after this line (both apps print the game under its legs), else the previous one
     const after = headers.find(h => h.i >= i);
-    return (after || headers[headers.length - 1]).g;
+    const h = after || headers[headers.length - 1];
+    lastHeaderDist = Math.abs(h.i - i);
+    return h.g;
   };
 
   // ---- legs
@@ -173,12 +176,22 @@ export function parseSlip(raw, ctx) {
   }
 
   function withGame(leg, i, player, team) {
-    let g = null;
-    if (team) g = gameFor(team, null, idx);
-    if (!g && player?.team) g = gameFor(player.team, null, idx);
-    if (!g) g = nearestGame(i);
+    let g = null, src = null;
+    if (team) { g = gameFor(team, null, idx); src = 'team'; }
+    if (!g && player?.team) { g = gameFor(player.team, null, idx); src = 'player'; }
+    if (!g) { g = nearestGame(i); src = g ? (lastHeaderDist <= 3 ? 'header-near' : 'header') : null; }
     if (g) Object.assign(leg, { home: g.home, away: g.away, start: g.start, game: `${g.away} @ ${g.home}` });
+    leg.gameSrc = src;
     return leg;
+  }
+
+  // Legs that name a team or player pin down the game for sure. If they all agree (a same-game
+  // parlay), legs that only had a nearby header or nothing (e.g. "Under 61.5") belong to that game too.
+  const anchors = out.legs.filter(l => l.gameSrc === 'team' || l.gameSrc === 'player');
+  const keys = [...new Set(anchors.map(l => l.game))];
+  if (keys.length === 1) {
+    const a = anchors[0];
+    for (const l of out.legs) if (l.gameSrc === 'header' || !l.gameSrc) Object.assign(l, { home: a.home, away: a.away, start: a.start, game: a.game, gameSrc: 'parlay' });
   }
 
   // ---- totals check

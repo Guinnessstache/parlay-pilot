@@ -246,3 +246,6 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .scan-actions { display: flex; gap: 8px; margin-top: 10px; }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
 @media (max-width: 480px) { .scan-grid { grid-template-columns: 1fr; } .scan-thumb { width: 100%; max-height: 220px; object-fit: contain; } }
+
+.mi-game { font-size: 12px; }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; font-size: 12px; cursor: pointer; }
