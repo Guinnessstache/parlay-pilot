@@ -1,9 +1,9 @@
 import { CONFIG } from './config.js';
-import { getScoreboard, getBoardFor, matchGame, gradeLeg } from './live.js';
+import { getScoreboard, getBoardFor, matchGame, gradeLeg, legChance } from './live.js';
 import { parseSlip } from './slipscan.js';
 import {
   BOOK_NAMES, MARKET_LABEL, buildLegs, findParlays, summarize, betslipLink,
-  fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket
+  fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket, normName
 } from './engine.js';
 
 const $ = s => document.querySelector(s);
@@ -328,12 +328,14 @@ async function gradePractice() {
       const l = t.legs[i];
       const ev = state.data.events.find(e => e.id === l.eventId);
       const r = ev ? await gradeLeg(l, ev, state.board) : { status: 'pending', text: '' };
+      r.chance = ev ? await legChance(l, ev, state.board, l.pMarket ?? l.p) : null;
+      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind')) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
       res.push(r);
       const g = ev && matchGame(ev, state.board);
       if (g?.state === 'in') anyLive = true;
       let chip = items[i]?.querySelector('.grade');
       if (items[i] && !chip) { chip = document.createElement('span'); chip.className = 'grade'; items[i].appendChild(chip); }
-      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${ICON[r.status]} ${WORD[r.status]}${r.text ? ' · ' + r.text : ''}`; }
+      if (chip) { chip.className = `grade ${r.status}`; chip.innerHTML = `${ICON[r.status]} ${WORD[r.status]}${r.text ? ' · ' + esc(r.text) : ''}${r.chance != null && r.status !== 'won' && r.status !== 'lost' ? ` <b class="lc">${pctTxt(r.chance)}</b>` : ''}`; }
     }
     const lost = res.some(r => r.status === 'lost'), allWon = res.every(r => r.status === 'won');
     const alive = res.filter(r => r.status !== 'lost').length;
@@ -343,7 +345,8 @@ async function gradePractice() {
     const g0 = ev0 && matchGame(ev0, state.board);
     sum.className = `t-practice-status ${allWon ? 'won' : lost ? 'lost' : ''}`;
     sum.textContent = (g0 ? `${g0.detail} · ${g0.away.split(' ').pop()} ${g0.awayScore} – ${g0.home.split(' ').pop()} ${g0.homeScore} · ` : '') +
-      (allWon ? 'TICKET WON' : lost ? 'Ticket lost' : `${res.filter(r => r.status === 'won').length} of ${res.length} legs won, ${alive} still alive`);
+      (allWon ? 'TICKET WON' : lost ? 'Ticket lost' : `${res.filter(r => r.status === 'won').length} of ${res.length} legs won, ${alive} still alive`) +
+      (!allWon && !lost && res.every(r => r.chance != null) ? ` · live chance ${pctTxt(res.reduce((a, r) => a * r.chance, 1))}` : '');
   }
   if (anyLive) gradePractice.t = setTimeout(gradePractice, 30000); // refresh every 30s while a game is live
 }
@@ -381,7 +384,7 @@ function trackTicket(t, q, { practice = false, quiet = false } = {}) {
     key, savedAt: new Date().toISOString(), book: q.book, stake: q.stake, dec: t.dec, p: t.p, practice,
     legs: t.legs.filter(l => !l.gone).map(l => {
       const e = evs.get(l.eventId) || {};
-      return { id: l.id, eventId: l.eventId, market: l.market, name: l.name, desc: l.desc, point: l.point, dec: l.dec, label: l.label,
+      return { id: l.id, eventId: l.eventId, market: l.market, name: l.name, desc: l.desc, point: l.point, dec: l.dec, label: l.label, p: l.p,
         home: e.home, away: e.away, start: e.start || l.start };
     }),
     result: null // set once every leg is settled
@@ -399,6 +402,24 @@ function openMine() {
   $('#mine').hidden = false;
   renderMine();
   $('#mine').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+
+// pre-game chance for a leg we didn't price ourselves (scanned slips): look it up in the odds snapshot
+function prePFor(l) {
+  if (l.p != null) return l.p;
+  if (l.market !== 'player_anytime_td' || !l.desc) return null;
+  const ev = state.data?.events.find(e => e.home === l.home && e.away === l.away);
+  const ps = [];
+  for (const b of Object.values(ev?.books || {})) for (const o of b.m?.player_anytime_td?.o || []) if (o.d && normName(o.d) === normName(l.desc) && o.p > 1) ps.push(1 / o.p / 1.2);
+  return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null;
+}
+const pctTxt = p => p >= 0.995 ? '100%' : p <= 0.005 ? '0%' : p >= 0.1 ? `${Math.round(p * 100)}%` : `${(p * 100).toFixed(1)}%`;
+function sparkline(hist) {
+  if (!hist || hist.length < 2) return '';
+  const w = 110, h = 26, t0 = hist[0][0], t1 = hist.at(-1)[0] || t0 + 1;
+  const pts = hist.map(([t, p]) => `${((t - t0) / Math.max(1, t1 - t0) * w).toFixed(1)},${(h - 2 - p * (h - 4)).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 }
 
 const RICON = { won: '✓', lost: '✗', ahead: '▲', behind: '▼', pending: '•' };
@@ -477,9 +498,24 @@ async function gradeMine() {
       const g = matchGame(ev, board);
       if (g?.state === 'in') anyLive = true;
       const r = await gradeLeg(l, ev, board);
+      r.chance = await legChance(l, ev, board, prePFor(l));
+      if (r.chance != null && (r.status === 'ahead' || r.status === 'behind')) r.status = r.chance >= 0.5 ? 'ahead' : 'behind';
       res.push(r);
       const chip = card?.querySelector(`.grade[data-i="${i}"]`);
-      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + r.text : ''}${g && g.state !== 'pre' ? ` (${g.detail})` : ''}`; }
+      if (chip) { chip.className = `grade ${r.status}`; chip.innerHTML = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + esc(r.text) : ''}${g && g.state !== 'pre' ? ` (${esc(g.detail)})` : ''}${r.chance != null && r.status !== 'won' && r.status !== 'lost' ? ` <b class="lc">${pctTxt(r.chance)}</b>` : ''}`; }
+    }
+    // whole-ticket live chance + trend
+    const known = res.every(r => r.chance != null);
+    const tp = known ? res.reduce((a, r) => a * r.chance, 1) : null;
+    if (tp != null) {
+      x.hist = x.hist || [];
+      const last = x.hist.at(-1);
+      if (!last || Math.abs(last[1] - tp) > 0.003 || Date.now() - last[0] > 120000) { x.hist.push([Date.now(), +tp.toFixed(4)]); x.hist = x.hist.slice(-80); changed = true; }
+    }
+    if (card) {
+      let lc = card.querySelector('.mi-live');
+      if (!lc) { lc = document.createElement('div'); lc.className = 'mi-live'; card.querySelector('ol').before(lc); }
+      lc.innerHTML = tp == null ? '' : `<span class="k">${res.some(r => r.status !== 'pending') || anyLive ? 'Live chance to win' : 'Chance to win'} <button type="button" class="info" data-info="live" aria-label="What is this?">i</button></span><span class="v">${pctTxt(tp)}</span>${sparkline(x.hist)}`;
     }
     const result = res.some(r => r.status === 'lost') ? 'lost' : res.length && res.every(r => r.status === 'won') ? 'won' : null;
     if (result !== x.result) { x.result = result; changed = true; }
@@ -808,6 +844,7 @@ const INFO = {
   form: 'On: each leg\'s chance is nudged toward how often that bet hit in the player\'s/team\'s recent games. Example: Knox anytime TD is ~15% by the odds; he scored in 2 of his last 5 (40%), so it becomes ~16–17% — not 40%. Five games is little evidence and the odds already account for form, so the nudge is capped at ±35% of the market\'s number. It mostly breaks ties between similar legs. Off: odds only.',
   practice: 'Practice mode: include games that have already kicked off. Tickets are built from the last pre-kickoff prices, can\'t be placed (no sportsbook button), and every leg is graded live from ESPN — ✓ won, ✗ lost, ▲ on track, ▼ behind — updating every 30 seconds. Use it to see how the picks would have done. You can also type "practice" or "live" in the box.',
   scan: 'Add a bet you placed in the DraftKings or FanDuel app: upload a screenshot of the slip (My Bets → the ticket). The text is read on your phone — the image is never uploaded anywhere. You then check what was read (legs, wager, payout), fix anything, and save. It\'s tracked and graded live like any other ticket. Tip: crop to just the one ticket for best results.',
+  live: 'Live chance: how likely the leg (or whole ticket) is to win from here. Moneylines use ESPN\'s live win probability. Spreads and totals use the current score, time left and the game\'s pre-game line (calibrated to match ESPN\'s win probability). Player props use what the player has so far and how much game is left. The ticket number multiplies the legs, so same-game legs that move together are treated as independent. Updates every 30 seconds.',
   legs: 'Minimum and maximum number of legs on a ticket. Useful for app promos that need e.g. 4+ legs for a profit boost. More legs = more house cut, so a minimum usually lowers your real chance a bit. You can also type "at least 4 legs" or "3-5 legs" in the box above.',
   payout: 'What the sportsbook pays back if every leg wins, stake included, at the prices when the odds were last updated. Check the slip — prices move.',
   chance: 'How likely the whole ticket is to win, from about 10 sportsbooks\' odds with their cut removed (and nudged by recent form if that option is on). "1 in 95" means it would win about once every 95 tries.',
