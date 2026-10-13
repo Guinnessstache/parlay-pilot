@@ -414,7 +414,8 @@ function prePFor(l) {
   for (const b of Object.values(ev?.books || {})) for (const o of b.m?.player_anytime_td?.o || []) if (o.d && normName(o.d) === normName(l.desc) && o.p > 1) ps.push(1 / o.p / 1.2);
   return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null;
 }
-const pctTxt = p => p >= 0.995 ? '100%' : p <= 0.005 ? '0%' : p >= 0.1 ? `${Math.round(p * 100)}%` : `${(p * 100).toFixed(1)}%`;
+// never round a live (unsettled) chance to 0% or 100% - that reads as already lost / won
+const pctTxt = p => p >= 1 ? '100%' : p <= 0 ? '0%' : p >= 0.995 ? '>99%' : p < 0.001 ? '<0.1%' : p >= 0.1 ? `${Math.round(p * 100)}%` : `${(p * 100).toFixed(1)}%`;
 function sparkline(hist) {
   if (!hist || hist.length < 2) return '';
   const w = 110, h = 26, t0 = hist[0][0], t1 = hist.at(-1)[0] || t0 + 1;
