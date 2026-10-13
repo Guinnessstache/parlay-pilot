@@ -1,4 +1,5 @@
 import { CONFIG } from './config.js';
+import { getScoreboard, matchGame, gradeLeg } from './live.js';
 import {
   BOOK_NAMES, MARKET_LABEL, buildLegs, findParlays, summarize, betslipLink,
   fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket
@@ -64,7 +65,12 @@ async function loadData() {
     (nxt ? `<br>Next auto-update ${dayFmt.format(nxt)}` : '') +
     (isOwner() ? `<a class="owner-refresh" target="_blank" rel="noopener" href="https://github.com/${CONFIG.repo}/actions/workflows/${CONFIG.workflowFile}" title="Opens GitHub: click 'Run workflow' (~9 credits). New odds appear in ~1 min.">↻ Refresh odds</a>` : '');
 }
-const upcoming = () => (state.data?.events || []).filter(e => Date.parse(e.start) > Date.now() - 5 * 60e3);
+const isPractice = () => $('#practice')?.checked;
+const started = e => Date.parse(e.start) <= Date.now() - 5 * 60e3;
+const finished = e => { const g = matchGame(e, state.board); return g?.state === 'post'; };
+// Practice mode adds games already underway (not finished) using the last odds snapshot.
+const upcoming = () => (state.data?.events || []).filter(e => !started(e) || (isPractice() && !finished(e)))
+  .sort((a, b) => (started(b) - started(a)) || Date.parse(a.start) - Date.parse(b.start));
 
 // ---------- natural-language parsing ----------
 const NUM = String.raw`\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k)?`;
@@ -75,6 +81,8 @@ function parsePrompt(text) {
   const t = ` ${text.toLowerCase()} `;
   const out = {};
   let m;
+  // practice mode must be on before games are resolved, so live games are matchable
+  if (/\bpractice\b|in progress|\blive\b|already started|mid.?game/.test(t) && !$('#practice').checked) { $('#practice').checked = true; }
   if ((m = t.match(new RegExp(String.raw`(?:bet|wager|risk|put|stake|with)\s+(?:about\s+)?${NUM}`)))) out.stake = toNum(m[1], m[2]);
   if ((m = t.match(new RegExp(String.raw`(?:turn|make)\s+${NUM}\s+(?:dollars\s+)?into\s+${NUM}`)))) {
     out.stake = toNum(m[1], m[2]); out.win = toNum(m[3], m[4]); out.mode = 'total';
@@ -93,6 +101,7 @@ function parsePrompt(text) {
 
   if (/fan\s?duel|\bfd\b/.test(t)) out.book = 'fanduel';
   if (/draft\s?kings|\bdk\b/.test(t)) out.book = 'draftkings';
+  if (/\bpractice\b|in progress|\blive\b|already started|mid.?game/.test(t)) out.practice = true;
   out.props = !/no (?:player )?props|without props|game lines only/.test(t);  // each request resets it
   // bet types: "no moneyline", "no spreads", "no ML or spreads", "props only", "totals and props only"
   const only = t.match(/\b((?:(?:props?|totals?|spreads?|moneylines?|ml)(?:\s*(?:,|and|&|\+|or)\s*)?)+)\s+only\b|\bonly\s+((?:(?:props?|totals?|spreads?|moneylines?|ml)(?:\s*(?:,|and|&|\+|or)\s*)?)+)/);
@@ -152,6 +161,14 @@ function parsePrompt(text) {
 }
 
 // ---------- form ----------
+
+function practiceTicketPre(t) { return t.legs.some(l => l.start && Date.parse(l.start) <= Date.now() - 5 * 60e3); }
+function liveBadge(ev) {
+  const g = matchGame(ev, state.board);
+  if (!g) return '<span class="live-dot">LIVE</span>';
+  const ab = n => n.split(' ').slice(-1)[0];
+  return `<span class="live-dot">LIVE</span> ${esc(g.detail)} · ${esc(ab(g.away))} ${g.awayScore} – ${esc(ab(g.home))} ${g.homeScore}`;
+}
 function setBook(b) {
   state.book = b;
   document.querySelectorAll('#book button').forEach(x => x.setAttribute('aria-checked', String(x.dataset.v === b)));
@@ -168,7 +185,7 @@ function renderGames() {
     const bookHas = !!g.books?.[state.book];
     return `<label class="game ${has ? 'on' : ''}" title="${bookHas ? '' : BOOK_NAMES[state.book] + ' has no lines for this game yet'}">
       <input type="checkbox" value="${esc(g.id)}" ${has ? 'checked' : ''} ${bookHas ? '' : 'disabled'}>
-      <span><span class="when">${esc(dayFmt.format(new Date(g.start)))}</span><br>${esc(g.away)} <span class="muted">@</span> ${esc(g.home)}
+      <span><span class="when">${started(g) ? liveBadge(g) : esc(dayFmt.format(new Date(g.start)))}</span><br>${esc(g.away)} <span class="muted">@</span> ${esc(g.home)}
       ${notes.length ? `<br><span class="inj">${qbOut ? `QB ${esc(qbOut.player)} ${esc(qbOut.status)}` : `${notes.length} key skill player${notes.length > 1 ? 's' : ''} out`}</span>` : ''}</span>
     </label>`;
   }).join('');
@@ -184,7 +201,8 @@ function selectScope(scope) {
   const games = upcoming().filter(g => g.books?.[state.book]);
   const now = new Date();
   let ids = [];
-  if (scope === 'tonight') ids = games.filter(g => sameLocalDay(new Date(g.start), now)).map(g => g.id);
+  if (scope === 'live') ids = games.filter(g => started(g)).map(g => g.id);
+  if (scope === 'tonight') ids = games.filter(g => sameLocalDay(new Date(g.start), now) && (!started(g) || isPractice())).map(g => g.id);
   if (scope === 'next') ids = games.slice(0, 1).map(g => g.id);
   if (scope === 'week') ids = games.map(g => g.id);
   if (scope === 'tonight' && !ids.length) toast('No games tonight — showing the next game');
@@ -197,6 +215,7 @@ function applyParsed(p) {
   if (p.win) $('#win').value = Math.round(p.win * 100) / 100;
   if (p.mode) $('#mode').value = p.mode;
   if (p.book) setBook(p.book);
+  if (p.practice && !$('#practice').checked) { $('#practice').checked = true; $('.more').open = true; }
   if (p.props != null) $('#props').checked = p.props;
   for (const k of ['ml', 'spreads', 'totals', 'alts', 'tds']) if (p[k] != null) $('#' + k).checked = p[k];
   if (['ml', 'spreads', 'totals', 'props', 'alts', 'tds'].some(k => p[k] === false)) $('.more').open = true;
@@ -286,7 +305,46 @@ function generate(q) {
 
   res.innerHTML = header + notes.join('');
   tickets.forEach((t, i) => res.appendChild(renderTicket(t, q, i === 0 ? 'Best chance' : `Option ${i + 1}`, { excludedCount: outCount })));
+  gradePractice();
   res.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+
+// ---------- practice-mode live grading ----------
+const ICON = { won: '✓', lost: '✗', ahead: '▲', behind: '▼', pending: '•' };
+const WORD = { won: 'Won', lost: 'Lost', ahead: 'On track', behind: 'Behind', pending: 'Pending' };
+async function gradePractice() {
+  clearTimeout(gradePractice.t);
+  const cards = [...document.querySelectorAll('.ticket[data-practice="1"]')];
+  if (!cards.length) return;
+  state.board = await getScoreboard();
+  let anyLive = false;
+  for (const card of cards) {
+    const t = card._ticket;
+    const items = card.querySelectorAll('.t-legs li');
+    const res = [];
+    for (let i = 0; i < t.legs.length; i++) {
+      const l = t.legs[i];
+      const ev = state.data.events.find(e => e.id === l.eventId);
+      const r = ev ? await gradeLeg(l, ev, state.board) : { status: 'pending', text: '' };
+      res.push(r);
+      const g = ev && matchGame(ev, state.board);
+      if (g?.state === 'in') anyLive = true;
+      let chip = items[i]?.querySelector('.grade');
+      if (items[i] && !chip) { chip = document.createElement('span'); chip.className = 'grade'; items[i].appendChild(chip); }
+      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${ICON[r.status]} ${WORD[r.status]}${r.text ? ' · ' + r.text : ''}`; }
+    }
+    const lost = res.some(r => r.status === 'lost'), allWon = res.every(r => r.status === 'won');
+    const alive = res.filter(r => r.status !== 'lost').length;
+    let sum = card.querySelector('.t-practice-status');
+    if (!sum) { sum = document.createElement('div'); sum.className = 't-practice-status'; card.querySelector('.t-practice').after(sum); }
+    const ev0 = state.data.events.find(e => e.id === t.legs[0].eventId);
+    const g0 = ev0 && matchGame(ev0, state.board);
+    sum.className = `t-practice-status ${allWon ? 'won' : lost ? 'lost' : ''}`;
+    sum.textContent = (g0 ? `${g0.detail} · ${g0.away.split(' ').pop()} ${g0.awayScore} – ${g0.home.split(' ').pop()} ${g0.homeScore} · ` : '') +
+      (allWon ? 'TICKET WON' : lost ? 'Ticket lost' : `${res.filter(r => r.status === 'won').length} of ${res.length} legs won, ${alive} still alive`);
+  }
+  if (anyLive) gradePractice.t = setTimeout(gradePractice, 30000); // refresh every 30s while a game is live
 }
 
 // ---------- ticket rendering ----------
@@ -323,7 +381,7 @@ function renderTicket(t, q, title, opts = {}) {
   const w = [];
   if (t.sameGame) w.push(`${BOOK_NAMES[q.book]} re-prices same-game legs for correlation, so the slip may show different odds than ${fmtAmerican(t.dec)}.`);
   const started = t.legs.filter(l => Date.parse(l.start) < Date.now());
-  if (started.length) w.push('A game on this ticket has started — pre-game prices no longer apply.');
+  if (started.length && !practiceTicketPre(t)) w.push('A game on this ticket has started — pre-game prices no longer apply.');
   for (const gid of new Set(t.legs.map(l => l.eventId))) {
     const ev = state.data.events.find(e => e.id === gid);
     if (!ev) continue;
@@ -336,6 +394,17 @@ function renderTicket(t, q, title, opts = {}) {
   const live = t.legs.filter(l => !l.gone);
   const link = betslipLink(q.book, live, CONFIG);
   const open = node.querySelector('.t-open');
+  const practiceTicket = t.legs.some(l => l.start && Date.parse(l.start) <= Date.now() - 5 * 60e3);
+  if (practiceTicket) {
+    node.classList.add('practice');
+    open.replaceWith(Object.assign(document.createElement('span'), { className: 'btn disabled', textContent: 'Practice only — can\'t be placed', title: 'A game on this ticket has started. Prices are from before kickoff, so this ticket is for tracking only.' }));
+    const banner = document.createElement('div');
+    banner.className = 't-practice';
+    banner.innerHTML = '<b>PRACTICE TICKET</b> — built from pre-kickoff prices for a game already underway. Not placeable; legs are graded live below.';
+    node.querySelector('.t-head').after(banner);
+    node.dataset.practice = '1';
+    node._ticket = t;
+  }
   open.href = link.url;
   open.textContent = link.complete ? `Open in ${BOOK_NAMES[q.book]}` : `Go to ${BOOK_NAMES[q.book]}`;
   if (!link.complete) open.title = 'This book did not return bet-slip IDs for every leg — add them using the "open leg" links.';
@@ -440,6 +509,7 @@ const INFO = {
   sgp: 'Same-game legs: allow more than one leg from the same game (a same-game parlay). Off = at most one leg per game. Sportsbooks re-price same-game parlays, so the slip may show slightly different odds.',
   questionable: 'By default, props on players listed Questionable are skipped (Out / Doubtful / IR are always skipped). Turn this on to allow Questionable players — the leg will be flagged.',
   form: 'On: each leg\'s chance is nudged toward how often that bet hit in the player\'s/team\'s recent games. Example: Knox anytime TD is ~15% by the odds; he scored in 2 of his last 5 (40%), so it becomes ~16–17% — not 40%. Five games is little evidence and the odds already account for form, so the nudge is capped at ±35% of the market\'s number. It mostly breaks ties between similar legs. Off: odds only.',
+  practice: 'Practice mode: include games that have already kicked off. Tickets are built from the last pre-kickoff prices, can\'t be placed (no sportsbook button), and every leg is graded live from ESPN — ✓ won, ✗ lost, ▲ on track, ▼ behind — updating every 30 seconds. Use it to see how the picks would have done. You can also type "practice" or "live" in the box.',
   legs: 'Minimum and maximum number of legs on a ticket. Useful for app promos that need e.g. 4+ legs for a profit boost. More legs = more house cut, so a minimum usually lowers your real chance a bit. You can also type "at least 4 legs" or "3-5 legs" in the box above.',
   payout: 'What the sportsbook pays back if every leg wins, stake included, at the prices when the odds were last updated. Check the slip — prices move.',
   chance: 'How likely the whole ticket is to win, from about 10 sportsbooks\' odds with their cut removed (and nudged by recent form if that option is on). "1 in 95" means it would win about once every 95 tries.',
@@ -481,8 +551,10 @@ async function boot() {
     $('#results').innerHTML = `<div class="notice bad">Couldn't load odds data (${esc(e.message)}). If you just set this up, run the "Refresh data & deploy site" action once.</div>`;
     return;
   }
+  state.board = await getScoreboard();
   selectScope('tonight');
   setExamples();
+  $('#practice').addEventListener('change', () => { selectScope($('#practice').checked ? 'live' : 'tonight'); });
 
   document.querySelectorAll('#book button').forEach(b => b.addEventListener('click', () => { setBook(b.dataset.v); renderGames(); }));
   document.querySelectorAll('.game-quick button').forEach(b => b.addEventListener('click', () => selectScope(b.dataset.scope)));

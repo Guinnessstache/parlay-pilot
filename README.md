@@ -35,6 +35,10 @@ Each refresh also pulls ESPN's public stats (free, no key): every team's results
 - **"Why this ticket"**: one line per leg with the stats behind it, e.g. "averaging 71 rec yds over his last 5 (88, 54, 102, 47, 64), cleared 64.5 in 3 of 5", plus a verdict (form backs it / in line / against it) based on how unusual the recent hit rate is compared to the market's odds.
 - **Pick ranking** (Fine-tune → "Factor in recent form", on by default): the recent hit rate is blended in heavily shrunk. 5 games moves a leg about 11% of the way, and never more than ±35% of its market chance. The betting market already prices in recent form, so this nudges ties rather than overriding the odds.
 
+## Practice mode (games in progress)
+
+Fine-tune → "Practice: include games in progress", or type "practice" or "live" in the box. This lets you build tickets on games that have already kicked off, using the last pre-kickoff prices. These tickets can't be placed: the sportsbook button is replaced with "Practice only". Every leg is graded live from ESPN's public scoreboard and box score (✓ won / ✗ lost / ▲ on track / ▼ behind), refreshing every 30 seconds while the game is on. It's a way to see how the picks would have done. It costs no Odds API credits.
+
 ## Bet-slip links: test these first
 
 | Book | Format used | Status |
