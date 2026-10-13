@@ -41,18 +41,18 @@
 
       <form id="form" class="controls" autocomplete="off">
         <div class="field money">
-          <label for="stake">Bet</label>
+          <span class="flabel"><label for="stake">Bet</label> <button type="button" class="info" data-info="stake" aria-label="What is this?">i</button></span>
           <div class="input-prefix"><span>$</span><input id="stake" type="number" min="1" step="1" inputmode="decimal"></div>
         </div>
         <div class="field money">
-          <label for="win"><select id="mode" aria-label="Payout type">
+          <span class="flabel"><label for="win"><select id="mode" aria-label="Payout type">
             <option value="profit">To win</option>
             <option value="total">Total payout</option>
-          </select></label>
+          </select></label> <button type="button" class="info" data-info="win" aria-label="What is this?">i</button></span>
           <div class="input-prefix"><span>$</span><input id="win" type="number" min="1" step="1" inputmode="decimal"></div>
         </div>
         <div class="field">
-          <span class="flabel">Sportsbook</span>
+          <span class="flabel">Sportsbook <button type="button" class="info" data-info="book" aria-label="What is this?">i</button></span>
           <div class="seg" id="book" role="radiogroup">
             <button type="button" data-v="draftkings" role="radio">DraftKings</button>
             <button type="button" data-v="fanduel" role="radio">FanDuel</button>
@@ -60,7 +60,7 @@
         </div>
 
         <div class="field wide">
-          <span class="flabel">Games <span id="games-count" class="muted"></span></span>
+          <span class="flabel">Games <span id="games-count" class="muted"></span> <button type="button" class="info" data-info="games" aria-label="What is this?">i</button></span>
           <div class="game-quick">
             <button type="button" data-scope="tonight">Tonight</button>
             <button type="button" data-scope="next">Next game</button>
@@ -70,18 +70,18 @@
         </div>
 
         <details class="field wide more">
-          <summary>Fine-tune</summary>
+          <summary>Fine-tune <span class="muted">— tap <span class="info-sample">i</span> for what each option does</span></summary>
           <div class="toggles">
-            <label><input type="checkbox" id="ml" checked> Moneyline</label>
-            <label><input type="checkbox" id="spreads" checked> Spreads</label>
-            <label><input type="checkbox" id="totals" checked> Totals</label>
-            <label><input type="checkbox" id="props" checked> Player props</label>
-            <label><input type="checkbox" id="tds" checked> Anytime TDs</label>
-            <label><input type="checkbox" id="alts" checked> Alt lines</label>
-            <label><input type="checkbox" id="sgp" checked> Same-game legs</label>
-            <label><input type="checkbox" id="questionable"> Allow questionable players</label>
-            <label title="Blends each leg's last-5-game hit rate into its chance, weighted by sample size. The betting market still dominates."><input type="checkbox" id="form-weight" checked> Factor in recent form</label>
-            <span class="legs">Legs
+            <label><input type="checkbox" id="ml" checked> Moneyline <button type="button" class="info" data-info="ml" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="spreads" checked> Spreads <button type="button" class="info" data-info="spreads" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="totals" checked> Totals <button type="button" class="info" data-info="totals" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="props" checked> Player props <button type="button" class="info" data-info="props" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="tds" checked> Anytime TDs <button type="button" class="info" data-info="tds" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="alts" checked> Alt lines <button type="button" class="info" data-info="alts" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="sgp" checked> Same-game legs <button type="button" class="info" data-info="sgp" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="questionable"> Allow questionable players <button type="button" class="info" data-info="questionable" aria-label="What is this?">i</button></label>
+            <label><input type="checkbox" id="form-weight" checked> Factor in recent form <button type="button" class="info" data-info="form" aria-label="What is this?">i</button></label>
+            <span class="legs">Legs <button type="button" class="info" data-info="legs" aria-label="What is this?">i</button>
               <label>min <input type="number" id="minlegs" min="1" max="10" value="1" inputmode="numeric"></label>
               <label>max <input type="number" id="maxlegs" min="1" max="10" value="6" inputmode="numeric"></label>
             </span>
@@ -108,10 +108,10 @@
       </header>
       <div class="t-pay">
         <div><span class="k">Bet</span><span class="v t-stake"></span></div>
-        <div><span class="k">Pays</span><span class="v t-payout"></span></div>
-        <div class="chance"><span class="k">Real chance</span><span class="v t-chance"></span></div>
+        <div><span class="k">Pays <button type="button" class="info" data-info="payout" aria-label="What is this?">i</button></span><span class="v t-payout"></span></div>
+        <div class="chance"><span class="k">Real chance <button type="button" class="info" data-info="chance" aria-label="What is this?">i</button></span><span class="v t-chance"></span></div>
       </div>
-      <div class="t-meter"><div class="bar"><span class="fill"></span></div><span class="t-meter-label"></span></div>
+      <div class="t-meter"><div class="bar"><span class="fill"></span></div><span class="t-meter-label"></span> <button type="button" class="info" data-info="edge" aria-label="What is this?">i</button></div>
       <ol class="t-legs"></ol>
       <div class="t-summary"></div>
       <ul class="t-warn"></ul>
@@ -124,6 +124,7 @@
     </article>
   </template>
 
+  <div id="infotip" class="infotip" role="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="assets/app.js"></script>
 </body>

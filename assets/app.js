@@ -424,8 +424,53 @@ function setExamples() {
   $('#examples').innerHTML = ex.map(t => `<button type="button">${esc(t)}</button>`).join('');
 }
 
+
+// ---------- (i) help popovers ----------
+const INFO = {
+  stake: 'How much you want to put on the bet.',
+  win: '"To win" = profit on top of your stake ($10 to win $100 pays $110 back). "Total payout" = everything you get back, stake included ($10 into $100 pays $100). Switch with the dropdown.',
+  book: 'Which sportsbook the ticket is priced for. Prices and available bets differ between DraftKings and FanDuel, and the "Open in…" button loads the slip in that app.',
+  games: 'Which games legs can come from. None ticked = every upcoming game. More games = more combinations to choose from, which usually finds a better-priced ticket. Games marked with injuries have key players out.',
+  ml: 'Moneyline: a team simply has to win the game.',
+  spreads: 'Spreads: a team has to win by more than the number (−6.5) or lose by less than it (+6.5). Turning this off also removes alternate spreads.',
+  totals: 'Totals (over/under): combined points scored by both teams goes over or under the number.',
+  props: 'Player props: bets on a single player, e.g. yards or catches over/under a number. Players with no recent game data or no role in recent games are always skipped. (Yardage props need the paid odds plan; on the free plan only anytime TDs load.)',
+  tds: 'Anytime TD: the player scores at least one touchdown at any point in the game. Long-shot TD props are a common way tickets reach big payouts.',
+  alts: 'Alt lines: the same spread/total bets at different numbers than the main line — e.g. Rams −20.5 at +900 instead of −3.5 at −110. They let the site tune the payout precisely. Off = main lines only.',
+  sgp: 'Same-game legs: allow more than one leg from the same game (a same-game parlay). Off = at most one leg per game. Sportsbooks re-price same-game parlays, so the slip may show slightly different odds.',
+  questionable: 'By default, props on players listed Questionable are skipped (Out / Doubtful / IR are always skipped). Turn this on to allow Questionable players — the leg will be flagged.',
+  form: 'On: each leg\'s chance is nudged toward how often that bet hit in the player\'s/team\'s recent games. Example: Knox anytime TD is ~15% by the odds; he scored in 2 of his last 5 (40%), so it becomes ~16–17% — not 40%. Five games is little evidence and the odds already account for form, so the nudge is capped at ±35% of the market\'s number. It mostly breaks ties between similar legs. Off: odds only.',
+  legs: 'Minimum and maximum number of legs on a ticket. Useful for app promos that need e.g. 4+ legs for a profit boost. More legs = more house cut, so a minimum usually lowers your real chance a bit. You can also type "at least 4 legs" or "3-5 legs" in the box above.',
+  payout: 'What the sportsbook pays back if every leg wins, stake included, at the prices when the odds were last updated. Check the slip — prices move.',
+  chance: 'How likely the whole ticket is to win, from about 10 sportsbooks\' odds with their cut removed (and nudged by recent form if that option is on). "1 in 95" means it would win about once every 95 tries.',
+  edge: 'Compares the payout to the ticket\'s fair value. "House edge 6%" = on average you\'d get back $94 per $100 bet over many tries. "Pays X% more than other books\' average" = this book is pricing these legs more generously than the rest — not a guarantee, often just a pricing difference.'
+};
+function setupInfo() {
+  const tip = $('#infotip');
+  let openFor = null;
+  const close = () => { tip.hidden = true; openFor = null; };
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.info');
+    if (!b) { if (!e.target.closest('#infotip')) close(); return; }
+    e.preventDefault(); e.stopPropagation();
+    if (openFor === b) return close();
+    tip.textContent = INFO[b.dataset.info] || '';
+    tip.hidden = false; openFor = b;
+    const r = b.getBoundingClientRect(), w = Math.min(320, window.innerWidth - 24);
+    tip.style.width = w + 'px';
+    tip.style.left = Math.max(12, Math.min(window.innerWidth - w - 12, r.left + r.width / 2 - w / 2)) + 'px';
+    const below = r.bottom + 8 + window.scrollY;
+    tip.style.top = below + 'px';
+    // flip above if it would go off-screen
+    requestAnimationFrame(() => { if (r.bottom + 8 + tip.offsetHeight > window.innerHeight) tip.style.top = (r.top + window.scrollY - tip.offsetHeight - 8) + 'px'; });
+  }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  window.addEventListener('scroll', close, { passive: true });
+}
+
 // ---------- boot ----------
 async function boot() {
+  setupInfo();
   $('#helpline').textContent = CONFIG.helpline.text;
   $('#helpline').href = CONFIG.helpline.href;
   $('#stake').value = CONFIG.defaultStake;

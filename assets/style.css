@@ -176,3 +176,10 @@ main { max-width: 920px; margin: 0 auto; padding: 0 16px 40px; }
 .owner-refresh:hover { border-color: var(--accent); }
 
 .notice .fixes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+.info, .info-sample { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--muted); background: transparent; color: var(--muted); font: italic 700 11px/1 Georgia, serif; padding: 0; margin-left: 4px; cursor: pointer; vertical-align: 1px; text-transform: none; letter-spacing: 0; flex: none; }
+.info:hover, .info:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.info-sample { cursor: default; width: 15px; height: 15px; font-size: 10px; margin: 0 2px; }
+.infotip { position: absolute; z-index: 20; background: #f1f6f2; color: #0b100e; font-size: 13px; line-height: 1.45; padding: 10px 12px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.more summary .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.flabel { display: flex; align-items: center; gap: 2px; }
