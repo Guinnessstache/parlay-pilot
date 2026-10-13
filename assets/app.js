@@ -453,6 +453,7 @@ function renderMine() {
         <span class="mi-odds">${fmtAmerican(x.dec)}</span>
         <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}${x.scanned ? ' · 📷 scanned' : ''}</span>
         <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
+        <span class="mi-score"></span>
       </header>
       <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span>
         <span class="mi-game muted">${l.home ? `${esc(l.away)} @ ${esc(l.home)} · ${esc(dayFmt.format(new Date(l.start)))}` : 'No game set'}${x.scanned ? `<span class="mi-fixwrap" hidden> · <button type="button" class="linkish mi-fix" data-i="${i}">change game</button></span>` : ''}</span>
@@ -520,6 +521,18 @@ async function gradeMine() {
       if (!last || Math.abs(last[1] - tp) > 0.003 || Date.now() - last[0] > 120000) { x.hist.push([Date.now(), +tp.toFixed(4)]); x.hist = x.hist.slice(-80); changed = true; }
     }
     if (card) {
+      // live score badge(s): one per game on the ticket
+      const seenG = new Map();
+      for (const l of x.legs) {
+        const k = `${l.home}|${l.away}|${l.start}`;
+        if (seenG.has(k) || !l.home) continue;
+        seenG.set(k, matchGame({ home: l.home, away: l.away, start: l.start }, await getBoardFor(l.start)) || { pre: true, ...l });
+      }
+      const ab = n => state.stats?.teams?.[n]?.abbr || (n || '').split(' ').pop().slice(0, 3).toUpperCase();
+      const badge = g => g.pre || g.state === 'pre'
+        ? `<span class="sc pre"><span class="sc-top">${esc(dayFmt.format(new Date(g.start)))}</span><span class="sc-row">${ab(g.away)} @ ${ab(g.home)}</span></span>`
+        : `<span class="sc ${g.state === 'in' ? 'live' : 'final'}"><span class="sc-top">${g.state === 'in' ? `<i class="live-dot">LIVE</i> ${esc(g.detail.replace(' - ', ' '))}` : 'FINAL'}</span><span class="sc-row">${ab(g.away)} <b>${g.awayScore}</b> <span class="muted">–</span> ${ab(g.home)} <b>${g.homeScore}</b></span></span>`;
+      card.querySelector('.mi-score').innerHTML = [...seenG.values()].map(badge).join('');
       let lc = card.querySelector('.mi-live');
       if (!lc) { lc = document.createElement('div'); lc.className = 'mi-live'; card.querySelector('ol').before(lc); }
       lc.innerHTML = tp == null ? '' : `<span class="k">${res.some(r => r.status !== 'pending') || anyLive ? 'Live chance to win' : 'Chance to win'} <button type="button" class="info" data-info="live" aria-label="What is this?">i</button></span><span class="v">${pctTxt(tp)}</span>${sparkline(x.hist)}`;

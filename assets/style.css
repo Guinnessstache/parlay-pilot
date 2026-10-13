@@ -283,3 +283,25 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 
 .sc-amt { font-size: 13px; color: var(--muted); align-self: center; }
 .sc-amt b { color: var(--text); font-family: var(--mono); font-size: 15px; margin-left: 2px; }
+
+.mi-score { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+.mi-score:empty { display: none; }
+.mi-score .sc { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 13px; padding: 3px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.mi-score .sc b { color: var(--text); font-size: 14px; }
+.mi-score .sc.live { border-color: rgba(255,107,94,.5); color: var(--text); }
+.mi-score .sc .live-dot { font-style: normal; font-family: inherit; }
+
+/* ticket header as a grid: odds | details | status, with the live score under the status (right column) */
+.mine-item header { display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto; column-gap: 10px; row-gap: 4px; align-items: start; }
+.mine-item header .mi-odds { grid-column: 1; grid-row: 1 / span 2; }
+.mine-item header .mi-meta { grid-column: 2; grid-row: 1 / span 2; }
+.mine-item header .mi-status { grid-column: 3; grid-row: 1; text-align: right; }
+.mine-item header .mi-score { grid-column: 3; grid-row: 2; flex-basis: auto; margin-top: 0; flex-direction: column; align-items: flex-end; }
+
+.mine-item header { grid-template-columns: auto minmax(0, 1fr) auto; }
+.mine-item header .mi-status { white-space: nowrap; font-size: 12px; }
+.mi-score .sc { flex-direction: column; align-items: flex-end; gap: 1px; padding: 5px 9px; border-radius: 10px; white-space: nowrap; }
+.mi-score .sc-top { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.mi-score .sc-row { font-size: 13px; color: var(--muted); }
+.mi-score .sc-row b { color: var(--text); font-size: 16px; }
+.mi-score .live-dot { font-size: 9px; padding: 0 4px; }
