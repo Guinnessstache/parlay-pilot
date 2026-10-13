@@ -100,13 +100,13 @@ function parsePrompt(text) {
     const w = only[1] || only[2];
     out.ml = /moneyline|\bml\b/.test(w); out.spreads = /spread/.test(w); out.totals = /total/.test(w); out.props = /prop/.test(w);
   } else {
-    const neg = t.match(/\b(?:no|without|skip|exclude)\s+((?:(?:the\s+)?(?:props?|totals?|spreads?|moneylines?|ml|alt(?:ernate)? lines?)(?:\s*(?:,|and|&|or|\/)\s*)?)+)/g) || [];
+    const neg = t.match(/\b(?:no|without|skip|exclude)\s+((?:(?:the\s+)?(?:props?|totals?|spreads?|moneylines?|ml|alt(?:ernate)? lines?|(?:anytime\s+)?(?:tds?|touchdowns?))(?:\s*(?:,|and|&|or|\/)\s*)?)+)/g) || [];
     const n = neg.join(' ');
     out.ml = !/moneyline|\bml\b/.test(n); out.spreads = !/spread/.test(n); out.totals = !/total/.test(n);
     if (/prop/.test(n)) out.props = false;
     out.alts = !/alt/.test(n);
   }
-  out.tds = !/\b(?:no|without|skip|exclude)\s+(?:the\s+)?(?:anytime\s+)?(?:tds?|touchdowns?)\b|no anytime/.test(t);
+  out.tds = !(/\b(?:tds?|touchdowns?)\b/.test((t.match(/\b(?:no|without|skip|exclude)\s+[^.;]*/g) || []).join(' ')) || /no anytime/.test(t));
   out.sgp = !/no same.?game|different games|no sgp/.test(t);
   // leg counts: "3-5 legs", "exactly 4 legs", "at least 4 legs", "4+ legs", "minimum 3 legs", "max 5 legs", "4 legs"
   const cap = n => Math.max(1, Math.min(CONFIG.maxLegsCap, n));
