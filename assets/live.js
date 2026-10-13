@@ -16,7 +16,10 @@ function parseBoard(j) {
       espnId: e.id, start: e.date,
       state: e.status?.type?.state, detail: e.status?.type?.shortDetail || '', period: e.status?.period || 0, clock: e.status?.clock ?? 0,
       home: h?.team?.displayName, away: a?.team?.displayName,
-      homeScore: +(h?.score || 0), awayScore: +(a?.score || 0)
+      homeScore: +(h?.score || 0), awayScore: +(a?.score || 0),
+      // ball position for the drive in progress: yardLine counts from the offense's own goal line
+      sit: c.situation && Number.isFinite(c.situation.yardLine) && c.situation.possession
+        ? { yl: c.situation.yardLine, down: c.situation.down || 1, dist: c.situation.distance || 10 } : null
     };
   });
 }
@@ -163,6 +166,47 @@ function PhiInv(p) {
 }
 const SIG_MARGIN = 13.5, SIG_TOTAL = 11;   // NFL full-game standard deviations (margin, combined points)
 
+// ---- drive-by-drive model for points still to come ----
+// Points arrive in lumps (3s and 7s), so "one more score" is far less certain than a bell curve says.
+// League baseline per drive: ~22% TD, ~15% FG, ~0.5% safety  ->  ~2 pts/drive, ~22 drives a game.
+const DRIVES_PER_GAME = 22, DRIVE_SEC = 3600 / DRIVES_PER_GAME, BASE_TD = 0.22, BASE_FG = 0.15, BASE_PPD = 0.22 * 6.97 + 0.15 * 3 + 0.005 * 2;
+// drive in progress: [yards to the end zone, P(TD), P(FG)] from league drive outcomes by field position
+const FIELD = [[1, 0.82, 0.15], [5, 0.66, 0.28], [10, 0.56, 0.33], [20, 0.47, 0.36], [30, 0.40, 0.35], [40, 0.33, 0.28], [50, 0.28, 0.20], [65, 0.23, 0.15], [80, 0.19, 0.12], [99, 0.15, 0.10]];
+function fieldOdds(toGo) {
+  for (let i = 1; i < FIELD.length; i++) if (toGo <= FIELD[i][0]) {
+    const [a, ta, fa] = FIELD[i - 1], [b, tb, fb] = FIELD[i], w = (toGo - a) / (b - a);
+    return [ta + (tb - ta) * Math.max(0, w), fa + (fb - fa) * Math.max(0, w)];
+  }
+  return [FIELD.at(-1)[1], FIELD.at(-1)[2]];
+}
+// one drive's points as a sparse distribution
+const driveDist = (pTD, pFG) => { const pS = 0.005; return [[0, 1 - pTD - pFG - pS], [2, pS], [3, pFG], [6, pTD * 0.04], [7, pTD * 0.93], [8, pTD * 0.03]]; };
+function convolve(a, d) {
+  const out = new Array(a.length + 8).fill(0);
+  a.forEach((pa, i) => { if (pa) for (const [pts, pd] of d) out[i + pts] += pa * pd; });
+  return out;
+}
+// distribution of combined points still to come: index = points
+export function pointsToCome(g, total) {
+  const secLeft = g.state === 'post' ? 0 : g.period > 4 ? Math.max(60, g.clock || 0) : Math.max(0, (4 - g.period) * 900 + (g.clock || 0));
+  const k = Math.min(1.6, Math.max(0.6, (total ?? 45) / DRIVES_PER_GAME / BASE_PPD)); // this game's scoring level vs league average
+  let dist = [1], rest = secLeft;
+  if (g.sit && secLeft > 0) {
+    let [td, fg] = fieldOdds(100 - g.sit.yl);
+    if (g.sit.down >= 3 && g.sit.dist >= 8) { td *= 0.8; fg *= 0.9; }               // 3rd/4th & long
+    if (secLeft < 40) { td *= Math.min(1, secLeft / 40 + 0.3); }                        // little time to finish the drive
+    const sk = Math.sqrt(k);
+    dist = convolve(dist, driveDist(Math.min(0.9, td * sk), Math.min(0.9 - Math.min(0.9, td * sk), fg * sk)));
+    rest = Math.max(0, secLeft - Math.min(secLeft, DRIVE_SEC * 0.6));                   // the current drive uses up some clock
+  }
+  const n = rest / DRIVE_SEC, lo = Math.floor(n), frac = n - lo;
+  const gen = driveDist(Math.min(0.6, BASE_TD * k), Math.min(0.35, BASE_FG * k));
+  for (let i = 0; i < lo; i++) dist = convolve(dist, gen);
+  if (frac > 0.01) { const extra = convolve(dist, gen); dist = extra.map((p, i) => (1 - frac) * (dist[i] || 0) + frac * p); }
+  return dist;
+}
+const probMoreThan = (dist, x) => dist.reduce((a, p, i) => a + (i > x ? p : 0), 0);
+
 // fraction of regulation left (0..1); overtime counts as a sliver
 function timeLeft(g) {
   if (!g || g.state === 'pre') return 1;
@@ -196,8 +240,7 @@ export async function legChance(leg, ev, sb, pPre = null) {
   }
   if (/totals/.test(m)) {
     const tot = g.homeScore + g.awayScore;
-    const mean = (s?.total ?? 45) * f, sd = SIG_TOTAL * Math.sqrt(f);
-    const pOver = 1 - Phi((leg.point - tot - mean) / sd);
+    const pOver = probMoreThan(pointsToCome(g, s?.total), leg.point - tot);
     return leg.name === 'Over' ? pOver : 1 - pOver;
   }
   if (m === 'player_anytime_td') {
