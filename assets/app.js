@@ -351,7 +351,24 @@ async function gradePractice() {
 
 // ---------- My tickets (saved on this device) ----------
 const MINE_KEY = 'pp-mine-v1';
-function loadMine() { try { return JSON.parse(localStorage.getItem(MINE_KEY) || '[]'); } catch { return []; } }
+function loadMine() {
+  let list;
+  try { list = JSON.parse(localStorage.getItem(MINE_KEY) || '[]'); } catch { return []; }
+  let fixed = false;
+  for (const x of list) {
+    if (!x.scanned || x.repaired) continue;
+    const key = l => `${l.home}|${l.away}|${l.start}`;
+    const named = x.legs.filter(l => !/totals/.test(l.market) && l.home);
+    const games = [...new Set(named.map(key))];
+    if (games.length === 1) {
+      const g = named[0];
+      for (const l of x.legs) if (/totals/.test(l.market) && key(l) !== games[0]) { Object.assign(l, { home: g.home, away: g.away, start: g.start }); x.result = null; fixed = true; }
+    }
+    x.repaired = true;
+  }
+  if (fixed) try { localStorage.setItem(MINE_KEY, JSON.stringify(list)); } catch {}
+  return list;
+}
 function storeMine(list) { try { localStorage.setItem(MINE_KEY, JSON.stringify(list)); } catch { toast("Couldn't save — browser storage is blocked"); } updateMineCount(); }
 const ticketKey = (t, q) => `${q.book}|${t.legs.map(l => l.id).sort().join(',')}|${q.stake}`;
 function isTracked(t, q) { return loadMine().some(x => x.key === ticketKey(t, q)); }

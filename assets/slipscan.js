@@ -94,9 +94,12 @@ export function parseSlip(raw, ctx) {
   for (let i = 0; i < low.length; i++) {
     const pairs = [...low[i].matchAll(/(wager|stake|risk|bet amount|total wager|to pay|payout|potential payout|to return|returns?|total payout|to win|potential win)\s*:?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/g)];
     for (const [, lab, amt] of pairs) assignMoney(out, lab, money(amt));
-    if (!pairs.length && LABEL.test(low[i]) && i + 1 < low.length) {
-      const labs = [...low[i].matchAll(/(wager|stake|risk|bet amount|total wager|to pay|payout|potential payout|to return|returns?|total payout|to win|potential win)/g)].map(m => m[1]);
-      const amts = [...low[i + 1].matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)].map(m => money(m[1]));
+    if (!pairs.length && LABEL.test(low[i]) && !/\$/.test(low[i])) {
+      const labs = [...low[i].matchAll(/(total wager|wager|stake|risk|bet amount|to pay|total payout|potential payout|payout|to return|returns?|to win|potential win)/g)].map(m => m[1]);
+      const amtsOf = j => (j >= 0 && j < low.length && !/cash ?out/.test(low[j])) ? [...low[j].matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)].map(m => money(m[1])) : [];
+      // FanDuel prints "$5.00 $693.87" above "TOTAL WAGER TOTAL PAYOUT"; DraftKings/others print amounts below
+      const above = amtsOf(i - 1), below = amtsOf(i + 1);
+      const amts = above.length >= labs.length ? above : below.length ? below : above;
       labs.forEach((lab, k) => { if (amts[k] != null) assignMoney(out, lab, amts[k]); });
     }
   }
@@ -151,7 +154,7 @@ export function parseSlip(raw, ctx) {
     }
 
     // over / under
-    m = l.match(/\b(over|under|o|u)\s*(\d{1,3}(?:\.\d)?)\b/);
+    m = l.match(/\b(over|under|o|u)\s*\(?\s*(\d{1,3}(?:\.\d)?)\s*\)?/);
     if (m && !/\$/.test(l.slice(m.index, m.index + 12))) {
       const side = m[1].startsWith('o') ? 'Over' : 'Under';
       const point = +m[2];
