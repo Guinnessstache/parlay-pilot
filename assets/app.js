@@ -455,11 +455,17 @@ function renderMine() {
         <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
       </header>
       <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${l.dec ? fmtAmerican(l.dec) : ''}</span>
-        <span class="mi-game muted">${l.home ? `${esc(l.away)} @ ${esc(l.home)} · ${esc(dayFmt.format(new Date(l.start)))}` : 'No game set'}${x.scanned ? ` · <button type="button" class="linkish mi-fix" data-i="${i}">wrong game?</button>` : ''}</span>
+        <span class="mi-game muted">${l.home ? `${esc(l.away)} @ ${esc(l.home)} · ${esc(dayFmt.format(new Date(l.start)))}` : 'No game set'}${x.scanned ? `<span class="mi-fixwrap" hidden> · <button type="button" class="linkish mi-fix" data-i="${i}">change game</button></span>` : ''}</span>
         <span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
       <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
-        <button type="button" class="btn ghost mi-remove">Remove</button></footer>
+        <span>${x.scanned ? '<button type="button" class="linkish mi-edit">Change games</button> ' : ''}<button type="button" class="btn ghost mi-remove">Remove</button></span></footer>
     </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
+  $('#mine-list').querySelectorAll('.mi-edit').forEach(b => b.addEventListener('click', () => {
+    const card = b.closest('.mine-item');
+    const show = card.querySelector('.mi-fixwrap')?.hidden;
+    card.querySelectorAll('.mi-fixwrap').forEach(w => (w.hidden = !show));
+    b.textContent = show ? 'Done' : 'Change games';
+  }));
   $('#mine-list').querySelectorAll('.mi-fix').forEach(b => b.addEventListener('click', () => {
     const key = b.closest('.mine-item').dataset.key, i = +b.dataset.i;
     const games = sortedGames(scanContext().games);

@@ -257,3 +257,5 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .mi-live .v { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--warn); }
 .mine-item.won .mi-live .v { color: var(--good); }
 .spark { color: var(--warn); }
+
+.mine-item footer > span { display: flex; align-items: center; gap: 10px; }
