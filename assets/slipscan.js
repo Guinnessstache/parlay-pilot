@@ -51,12 +51,17 @@ function findTeams(line, idx) {
 
 function findPlayer(line, idx) {
   const l = normName(line.replace(/[^A-Za-z.' -]/g, ' '));
+  const squashed = l.replace(/[^a-z]/g, '');               // OCR often drops the space: "KelekiLatu"
   let best = null;
   for (const p of idx.players) {
     let pos = l.indexOf(p.key);
     if (pos < 0 && p.last) {
       const ini = `${p.first[0]} ${p.last}`;           // "d knox" (after normName strips the dot)
       pos = l.indexOf(ini);
+    }
+    if (pos < 0) {
+      const sq = p.key.replace(/[^a-z]/g, '');
+      if (sq.length >= 8 && squashed.includes(sq)) pos = squashed.indexOf(sq);
     }
     if (pos >= 0 && (!best || p.key.length > best.p.key.length)) best = { p, pos };
   }
@@ -80,6 +85,9 @@ export function parseSlip(raw, ctx) {
   const all = low.join(' ');
   if (/draft\s?kings|\bdk\b|sgpx?\b|pick sgp/.test(all)) out.book = 'draftkings';
   if (/fan\s?duel|same game parlay\+?|\bfd\b/.test(all)) out.book = out.book || 'fanduel';
+  // wording hints when the logo isn't in the screenshot
+  if (!out.book && /\bto pay\b/.test(all)) out.book = 'draftkings';
+  if (!out.book && /to return|total payout|spread betting/.test(all)) out.book = 'fanduel';
 
   // ---- money: "Wager: $10.00  To Pay: $110.40", or labels on one line and amounts on the next
   const LABEL = /(wager|stake|risk|bet amount|total wager)|(to pay|payout|potential payout|to return|returns?|total payout)|(to win|potential win|win)/;
@@ -100,7 +108,9 @@ export function parseSlip(raw, ctx) {
   const headers = [];
   low.forEach((l, i) => {
     const t = findTeams(l, idx);
-    if (t.length >= 2 && /@|\bvs\.?\b|\bat\b/.test(l)) {
+    // "Bills @ Rams", "BUF Bills @ LA Rams", or DraftKings' "BUF  Today 8:15 PM  LAR" (two teams, no bet on the line)
+    const looksLikeBet = /\b(over|under)\b|[+-]\d{1,2}(\.\d)?\b(?!\d)|moneyline|spread/.test(l);
+    if (t.length >= 2 && (/@|\bvs\.?\b|\bat\b/.test(l) || !looksLikeBet)) {
       const g = gameFor(t[0].team, t[1].team, idx);
       if (g) headers.push({ i, g });
     }
