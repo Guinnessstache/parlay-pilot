@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { getScoreboard, matchGame, gradeLeg } from './live.js';
+import { getScoreboard, getBoardFor, matchGame, gradeLeg } from './live.js';
 import {
   BOOK_NAMES, MARKET_LABEL, buildLegs, findParlays, summarize, betslipLink,
   fmtAmerican, indexInjuries, teamInjuryNotes, legLabel, explainTicket
@@ -347,6 +347,128 @@ async function gradePractice() {
   if (anyLive) gradePractice.t = setTimeout(gradePractice, 30000); // refresh every 30s while a game is live
 }
 
+
+// ---------- My tickets (saved on this device) ----------
+const MINE_KEY = 'pp-mine-v1';
+function loadMine() { try { return JSON.parse(localStorage.getItem(MINE_KEY) || '[]'); } catch { return []; } }
+function storeMine(list) { try { localStorage.setItem(MINE_KEY, JSON.stringify(list)); } catch { toast("Couldn't save — browser storage is blocked"); } updateMineCount(); }
+const ticketKey = (t, q) => `${q.book}|${t.legs.map(l => l.id).sort().join(',')}|${q.stake}`;
+function isTracked(t, q) { return loadMine().some(x => x.key === ticketKey(t, q)); }
+function trackTicket(t, q, { practice = false, quiet = false } = {}) {
+  const list = loadMine();
+  const key = ticketKey(t, q);
+  if (list.some(x => x.key === key)) return false;
+  const evs = new Map(state.data.events.map(e => [e.id, e]));
+  list.unshift({
+    key, savedAt: new Date().toISOString(), book: q.book, stake: q.stake, dec: t.dec, p: t.p, practice,
+    legs: t.legs.filter(l => !l.gone).map(l => {
+      const e = evs.get(l.eventId) || {};
+      return { id: l.id, eventId: l.eventId, market: l.market, name: l.name, desc: l.desc, point: l.point, dec: l.dec, label: l.label,
+        home: e.home, away: e.away, start: e.start || l.start };
+    }),
+    result: null // set once every leg is settled
+  });
+  storeMine(list.slice(0, 200));
+  if (!quiet) toast(practice ? 'Practice ticket saved to My tickets' : 'Saved to My tickets');
+  return true;
+}
+function untrack(key) { storeMine(loadMine().filter(x => x.key !== key)); }
+function updateMineCount() {
+  const n = loadMine().length;
+  $('#mine-count').textContent = n ? `(${n})` : '';
+}
+function openMine() {
+  $('#mine').hidden = false;
+  renderMine();
+  $('#mine').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+const RICON = { won: '✓', lost: '✗', ahead: '▲', behind: '▼', pending: '•' };
+const RWORD = { won: 'Won', lost: 'Lost', ahead: 'On track', behind: 'Behind', pending: 'Pending' };
+
+function mineTotals(list) {
+  const real = list.filter(x => !x.practice);
+  const settled = real.filter(x => x.result);
+  const won = settled.filter(x => x.result === 'won');
+  const staked = settled.reduce((a, x) => a + x.stake, 0);
+  const returned = won.reduce((a, x) => a + x.stake * x.dec, 0);
+  const pending = real.length - settled.length;
+  const pr = list.filter(x => x.practice && x.result);
+  return { n: real.length, settled: settled.length, won: won.length, staked, returned, net: returned - staked, pending,
+    expected: settled.reduce((a, x) => a + (x.p || 0), 0), prWon: pr.filter(x => x.result === 'won').length, prN: pr.length };
+}
+
+function renderMine() {
+  const list = loadMine();
+  const T = mineTotals(list);
+  $('#mine-totals').innerHTML = list.length ? `
+    <div><span class="k">Record</span><span class="v">${T.won}–${T.settled - T.won}</span></div>
+    <div><span class="k">Staked</span><span class="v">${money(T.staked)}</span></div>
+    <div><span class="k">Returned</span><span class="v">${money(T.returned)}</span></div>
+    <div><span class="k">Net</span><span class="v ${T.net >= 0 ? 'pos' : 'neg'}">${T.net >= 0 ? '+' : '−'}${money(Math.abs(T.net))}</span></div>
+    <p class="mine-sub">${mineSub(T)}</p>` : '';
+  $('#mine-list').innerHTML = list.length ? list.map(x => `
+    <article class="mine-item ${x.result || ''}" data-key="${esc(x.key)}" data-book="${esc(x.book)}">
+      <header>
+        <span class="mi-odds">${fmtAmerican(x.dec)}</span>
+        <span class="mi-meta">${money(x.stake)} → ${money(x.stake * x.dec)} · ${esc(BOOK_NAMES[x.book] || x.book)}${x.practice ? ' · <b class="pr">PRACTICE</b>' : ''}</span>
+        <span class="mi-status">${x.result === 'won' ? '✓ WON' : x.result === 'lost' ? '✗ LOST' : '…'}</span>
+      </header>
+      <ol>${x.legs.map((l, i) => `<li><span class="pick">${esc(l.label)}</span> <span class="muted">${fmtAmerican(l.dec)}</span><span class="grade pending" data-i="${i}">• checking…</span></li>`).join('')}</ol>
+      <footer><span class="muted">Saved ${esc(new Date(x.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</span>
+        <button type="button" class="btn ghost mi-remove">Remove</button></footer>
+    </article>`).join('') : '<p class="muted">No tickets yet. Build one and tap <b>☆ Track</b> or <b>Open in…</b>.</p>';
+  $('#mine-list').querySelectorAll('.mi-remove').forEach(b => b.addEventListener('click', () => {
+    untrack(b.closest('.mine-item').dataset.key); renderMine();
+  }));
+  gradeMine();
+}
+
+async function gradeMine() {
+  clearTimeout(gradeMine.t);
+  if ($('#mine').hidden) return;
+  const list = loadMine();
+  let anyLive = false, changed = false;
+  for (const x of list) {
+    const card = $('#mine-list').querySelector(`.mine-item[data-key="${CSS.escape(x.key)}"]`);
+    const res = [];
+    for (let i = 0; i < x.legs.length; i++) {
+      const l = x.legs[i];
+      const ev = { home: l.home, away: l.away, start: l.start };
+      const board = await getBoardFor(l.start);
+      const g = matchGame(ev, board);
+      if (g?.state === 'in') anyLive = true;
+      const r = await gradeLeg(l, ev, board);
+      res.push(r);
+      const chip = card?.querySelector(`.grade[data-i="${i}"]`);
+      if (chip) { chip.className = `grade ${r.status}`; chip.textContent = `${RICON[r.status]} ${RWORD[r.status]}${r.text ? ' · ' + r.text : ''}${g && g.state === 'in' ? ` (${g.detail})` : ''}`; }
+    }
+    const result = res.some(r => r.status === 'lost') ? 'lost' : res.length && res.every(r => r.status === 'won') ? 'won' : null;
+    if (result !== x.result) { x.result = result; changed = true; }
+    if (card) {
+      card.className = `mine-item ${result || ''}`;
+      card.querySelector('.mi-status').textContent = result === 'won' ? '✓ WON' : result === 'lost' ? '✗ LOST'
+        : `${res.filter(r => r.status === 'won').length}/${res.length} won · ${res.filter(r => r.status !== 'lost').length} alive`;
+    }
+  }
+  if (changed) { storeMine(list); renderMineHeader(list); }
+  if (anyLive) gradeMine.t = setTimeout(gradeMine, 30000);
+}
+function renderMineHeader(list) {
+  const T = mineTotals(list);
+  const el = $('#mine-totals');
+  el.querySelectorAll('.v')[0] && (el.querySelectorAll('.v')[0].textContent = `${T.won}–${T.settled - T.won}`);
+  el.querySelectorAll('.v')[1] && (el.querySelectorAll('.v')[1].textContent = money(T.staked));
+  el.querySelectorAll('.v')[2] && (el.querySelectorAll('.v')[2].textContent = money(T.returned));
+  const n = el.querySelectorAll('.v')[3];
+  if (n) { n.textContent = `${T.net >= 0 ? '+' : '−'}${money(Math.abs(T.net))}`; n.className = `v ${T.net >= 0 ? 'pos' : 'neg'}`; }
+  const sub = el.querySelector('.mine-sub');
+  if (sub) sub.textContent = mineSub(T);
+}
+function mineSub(T) {
+  return `${T.pending ? `${T.pending} ticket${T.pending > 1 ? 's' : ''} still open. ` : ''}${T.settled ? `Expected wins at the odds: ${T.expected.toFixed(1)} of ${T.settled}. ` : ''}${T.prN ? `Practice: ${T.prWon} of ${T.prN} won.` : ''}`;
+}
+
 // ---------- ticket rendering ----------
 function renderTicket(t, q, title, opts = {}) {
   const node = $('#ticket-tpl').content.firstElementChild.cloneNode(true);
@@ -410,6 +532,17 @@ function renderTicket(t, q, title, opts = {}) {
   if (!link.complete) open.title = 'This book did not return bet-slip IDs for every leg — add them using the "open leg" links.';
 
 
+  const trackBtn = node.querySelector('.t-track');
+  const markTracked = () => { trackBtn.textContent = '★ Tracked'; trackBtn.classList.add('on'); };
+  if (isTracked(t, q)) markTracked();
+  trackBtn.addEventListener('click', () => {
+    if (isTracked(t, q)) { untrack(ticketKey(t, q)); trackBtn.textContent = '☆ Track'; trackBtn.classList.remove('on'); toast('Removed from My tickets'); return; }
+    trackTicket(t, q, { practice: node.dataset.practice === '1' }); markTracked();
+  });
+  const openBtn = node.querySelector('.t-open');
+  if (openBtn) openBtn.addEventListener('click', () => {
+    if (trackTicket(t, q, { quiet: true })) { markTracked(); toast("Saved to My tickets — tap ★ Tracked to remove if you don't place it"); }
+  });
   node.querySelector('.t-share').addEventListener('click', () => shareTicket(t, q));
   const whyBtn = node.querySelector('.t-why'), why = node.querySelector('.t-why-body');
   whyBtn.addEventListener('click', () => {
@@ -554,6 +687,10 @@ async function boot() {
   state.board = await getScoreboard();
   selectScope('tonight');
   setExamples();
+  updateMineCount();
+  $('#mine-btn').addEventListener('click', () => $('#mine').hidden ? openMine() : ($('#mine').hidden = true));
+  $('#mine-close').addEventListener('click', () => { $('#mine').hidden = true; });
+  if (/[?&#]mine\b/.test(location.href)) openMine();
   $('#practice').addEventListener('change', () => { selectScope($('#practice').checked ? 'live' : 'tonight'); });
 
   document.querySelectorAll('#book button').forEach(b => b.addEventListener('click', () => { setBook(b.dataset.v); renderGames(); }));

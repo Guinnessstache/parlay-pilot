@@ -23,10 +23,20 @@
       <svg viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="32" rx="22" ry="13" fill="none" stroke="currentColor" stroke-width="5" transform="rotate(-35 32 32)"/><path d="M24 36 40 28M27 39l-3-6M33 36l-3-6M39 33l-3-6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
       <span>Parlay&nbsp;Pilot</span>
     </div>
-    <div id="freshness" class="freshness"></div>
+    <div class="top-right"><button type="button" id="mine-btn" class="mine-btn">My tickets <span id="mine-count"></span></button><div id="freshness" class="freshness"></div></div>
   </header>
 
   <main>
+    <section id="mine" class="mine" hidden>
+      <div class="mine-head">
+        <h2>My tickets</h2>
+        <button type="button" class="btn ghost" id="mine-close">Close</button>
+      </div>
+      <div id="mine-totals" class="mine-totals"></div>
+      <div id="mine-list" class="mine-list"></div>
+      <p class="muted mine-note">Saved on this device only. Tickets are added when you tap "Open in…" or "Track". Graded live from ESPN — no sportsbook login. Practice tickets are tracked but not counted in money totals.</p>
+    </section>
+
     <section class="ask" id="ask">
       <h1>What are you trying to hit?</h1>
       <label class="prompt-wrap">
@@ -118,6 +128,7 @@
       <ul class="t-warn"></ul>
       <div class="t-actions">
         <a class="btn primary t-open" target="_blank" rel="noopener"></a>
+        <button type="button" class="btn t-track">☆ Track</button>
         <button type="button" class="btn t-share">Share</button>
         <button type="button" class="btn ghost t-why">Why these?</button>
       </div>

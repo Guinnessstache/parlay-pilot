@@ -198,3 +198,32 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .grade.ahead { color: #9fd8ff; }
 .grade.behind { color: var(--warn); }
 .grade.pending { color: var(--muted); }
+
+.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.mine-btn { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.mine-btn:hover { border-color: var(--accent); }
+.mine { margin-top: 18px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.mine-head { display: flex; justify-content: space-between; align-items: center; }
+.mine h2 { font-family: var(--display); text-transform: uppercase; margin: 0; font-size: 24px; }
+.mine-totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+.mine-totals .k { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.mine-totals .v { font-family: var(--mono); font-size: 18px; font-weight: 700; }
+.mine-totals .v.pos { color: var(--good); } .mine-totals .v.neg { color: var(--bad); }
+.mine-sub { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--muted); }
+.mine-list { display: grid; gap: 10px; }
+.mine-item { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; }
+.mine-item[data-book=draftkings] { border-left-color: var(--dk); } .mine-item[data-book=fanduel] { border-left-color: var(--fd); }
+.mine-item.won { border-color: var(--good); } .mine-item.lost { opacity: .7; }
+.mine-item header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.mi-odds { font-family: var(--mono); font-weight: 700; color: var(--accent); font-size: 18px; }
+.mi-meta { font-size: 13px; color: var(--muted); flex: 1; }
+.mi-meta .pr { color: var(--warn); }
+.mi-status { font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.mine-item.won .mi-status { color: var(--good); } .mine-item.lost .mi-status { color: var(--bad); }
+.mine-item ol { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.mine-item li { display: grid; gap: 1px; font-size: 14px; }
+.mine-item footer { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.mine-item footer .btn { padding: 4px 10px; font-size: 12px; }
+.mine-note { font-size: 12px; margin: 12px 0 0; }
+.t-track.on { color: var(--accent); border-color: var(--accent); }
+@media (max-width: 640px) { .mine-totals { grid-template-columns: repeat(2, 1fr); } .top-right .freshness { font-size: 11px; } }

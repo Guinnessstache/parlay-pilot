@@ -4,27 +4,51 @@ import { normName } from './engine.js';
 
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
 let board = null, boardAt = 0;
+const dated = new Map(); // YYYYMMDD -> { at, games }
 const summaries = new Map(); // espnId -> { at, data }
+
+function parseBoard(j) {
+  return (j.events || []).map(e => {
+    const c = e.competitions?.[0] || {};
+    const team = side => c.competitors?.find(x => x.homeAway === side);
+    const h = team('home'), a = team('away');
+    return {
+      espnId: e.id, start: e.date,
+      state: e.status?.type?.state, detail: e.status?.type?.shortDetail || '', period: e.status?.period || 0,
+      home: h?.team?.displayName, away: a?.team?.displayName,
+      homeScore: +(h?.score || 0), awayScore: +(a?.score || 0)
+    };
+  });
+}
+
+// ESPN's scoreboard keyed by US-Eastern calendar date (that's how it groups games).
+export function etDateKey(iso) {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const g = t => parts.find(p => p.type === t).value;
+  return `${g('year')}${g('month')}${g('day')}`;
+}
+
+// Scoreboard for the day a game was played (finished days are cached for good).
+export async function getBoardFor(iso, maxAgeMs = 25000) {
+  const key = etDateKey(iso);
+  const c = dated.get(key);
+  if (c && (c.final || Date.now() - c.at < maxAgeMs)) return c.games;
+  try {
+    const r = await fetch(`${ESPN}/scoreboard?dates=${key}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    const games = parseBoard(await r.json());
+    dated.set(key, { at: Date.now(), games, final: games.length && games.every(g => g.state === 'post') });
+    return games;
+  } catch { return c?.games || []; }
+}
 
 export async function getScoreboard(maxAgeMs = 25000) {
   if (board && Date.now() - boardAt < maxAgeMs) return board;
   try {
     const r = await fetch(`${ESPN}/scoreboard`, { cache: 'no-store' });
     if (!r.ok) throw new Error(r.status);
-    const j = await r.json();
-    board = (j.events || []).map(e => {
-      const c = e.competitions?.[0] || {};
-      const team = side => c.competitors?.find(x => x.homeAway === side);
-      const h = team('home'), a = team('away');
-      return {
-        espnId: e.id, start: e.date,
-        state: e.status?.type?.state,             // pre | in | post
-        detail: e.status?.type?.shortDetail || '', // "7:17 - 2nd", "Final"
-        period: e.status?.period || 0,
-        home: h?.team?.displayName, away: a?.team?.displayName,
-        homeScore: +(h?.score || 0), awayScore: +(a?.score || 0)
-      };
-    });
+    board = parseBoard(await r.json());
     boardAt = Date.now();
   } catch { /* offline or blocked: practice mode still works, just without grading */ }
   return board || [];
