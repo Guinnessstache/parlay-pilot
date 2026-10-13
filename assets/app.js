@@ -106,6 +106,7 @@ function parsePrompt(text) {
     if (/prop/.test(n)) out.props = false;
     out.alts = !/alt/.test(n);
   }
+  out.tds = !/\b(?:no|without|skip|exclude)\s+(?:the\s+)?(?:anytime\s+)?(?:tds?|touchdowns?)\b|no anytime/.test(t);
   out.sgp = !/no same.?game|different games|no sgp/.test(t);
   // leg counts: "3-5 legs", "exactly 4 legs", "at least 4 legs", "4+ legs", "minimum 3 legs", "max 5 legs", "4 legs"
   const cap = n => Math.max(1, Math.min(CONFIG.maxLegsCap, n));
@@ -197,8 +198,8 @@ function applyParsed(p) {
   if (p.mode) $('#mode').value = p.mode;
   if (p.book) setBook(p.book);
   if (p.props != null) $('#props').checked = p.props;
-  for (const k of ['ml', 'spreads', 'totals', 'alts']) if (p[k] != null) $('#' + k).checked = p[k];
-  if (['ml', 'spreads', 'totals', 'props', 'alts'].some(k => p[k] === false)) $('.more').open = true;
+  for (const k of ['ml', 'spreads', 'totals', 'alts', 'tds']) if (p[k] != null) $('#' + k).checked = p[k];
+  if (['ml', 'spreads', 'totals', 'props', 'alts', 'tds'].some(k => p[k] === false)) $('.more').open = true;
   if (p.sgp != null) $('#sgp').checked = p.sgp;
   {
     // each request sets the leg range; unmentioned = default 1-6
@@ -223,7 +224,7 @@ function readForm() {
     target: mode === 'profit' ? 1 + win / stake : win / stake,
     games: [...state.selected],
     props: $('#props').checked, alts: $('#alts').checked, sgp: $('#sgp').checked,
-    ml: $('#ml').checked, spreads: $('#spreads').checked, totals: $('#totals').checked,
+    ml: $('#ml').checked, spreads: $('#spreads').checked, totals: $('#totals').checked, tds: $('#tds').checked,
     questionable: $('#questionable').checked, form: $('#form-weight').checked, ...legRange()
   };
 }
@@ -235,7 +236,7 @@ function generate(q) {
   if (q.target < 1.05) { res.innerHTML = '<div class="notice bad">That payout is less than your bet back. Raise the "to win" amount.</div>'; return; }
   const eventIds = q.games.length ? q.games : null;
   const { legs, excluded } = buildLegs(state.data, state.injuries, {
-    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, includeML: q.ml, includeSpreads: q.spreads, includeTotals: q.totals, allowQuestionable: q.questionable,
+    book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, includeML: q.ml, includeSpreads: q.spreads, includeTotals: q.totals, includeTD: q.tds, allowQuestionable: q.questionable,
     stats: state.stats, useForm: q.form
   });
   const nGames = new Set(legs.map(l => l.eventId)).size;
@@ -262,7 +263,7 @@ function generate(q) {
     if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines posted so far — alt lines and player props load about 12 hours before kickoff. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
     else if (q.minLegs > 1 && !q.sgp && q.minLegs > nGames) msg += ` A ${q.minLegs}-leg minimum with same-game legs off needs at least ${q.minLegs} games — pick more games or turn same-game legs on.`;
     else if (q.minLegs > 1) msg += ` With at least ${q.minLegs} legs, each leg has to be a short price — try lowering the minimum, adding games, or raising the target.`;
-    else if (!q.ml || !q.spreads || !q.totals || !q.props) msg += ` Some bet types are switched off (${[!q.ml && 'moneyline', !q.spreads && 'spreads', !q.totals && 'totals', !q.props && 'props'].filter(Boolean).join(', ')}) — turning one back on, adding games or changing the target will help.`;
+    else if (!q.ml || !q.spreads || !q.totals || !q.props || !q.tds) msg += ` Some bet types are switched off (${[!q.ml && 'moneyline', !q.spreads && 'spreads', !q.totals && 'totals', !q.props && 'props', !q.tds && 'anytime TDs'].filter(Boolean).join(', ')}) — turning one back on, adding games or changing the target will help.`;
     else msg += ' Try adding games, raising max legs, or lowering the target.';
     const fixes = [];
     if (rich.length && thin.length) fixes.push(`<button type="button" class="btn" data-fix="rich">Use ${rich.length === 1 ? `${esc(rich[0].away)} @ ${esc(rich[0].home)}` : `the ${rich.length} games with props`}</button>`);
