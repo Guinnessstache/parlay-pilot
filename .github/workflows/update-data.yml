@@ -2,10 +2,10 @@ name: Refresh data & deploy site
 
 # FREE-PLAN SETTINGS (The Odds API, 500 credits/month)
 # Each run costs ~3 credits for main lines on every game, plus ~3 credits per game
-# for alt spreads / alt totals / anytime TD on the next 2 games kicking off within 12 h.
-# Worst case ~9 credits/run x 3 runs x Thu/Sun/Mon ≈ 350 credits/month, plus ~50 for one
-# off-day morning run Tue/Wed/Fri/Sat, leaving
-# ~150 for manual "Run workflow" clicks. Check data/meta.json -> credits_remaining.
+# for alt spreads / alt totals / anytime TD on up to 2 games kicking off within 40 h
+# (skipping games pulled in the last 6 h; earlier pulls carry forward until kickoff).
+# Typical week ≈ 75-85 credits (≈ 350/month), leaving ~150 for the site's Sync button
+# (~6 credits per synced game). Check data/meta.json -> credits_remaining.
 #
 # Upgraded to a paid plan? Bump EVENT_WINDOW_HOURS to 36, MAX_EVENTS to 16, add the
 # player yardage markets back to EVENT_MARKETS, and widen the cron (see README).
@@ -14,7 +14,12 @@ on:
   push:
     branches: [main]
     paths-ignore: ['data/**']   # code pushes just redeploy; they don't spend credits
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      event_ids:
+        description: 'Odds API event id(s) to pull alt lines + props for (comma list). Blank = next games automatically.'
+        required: false
+        default: ''
   schedule:
     # UTC times. 14:07 / 19:07 / 23:07 UTC = 10:07am / 3:07pm / 7:07pm Eastern (EDT).
     # Days: 0 = Sun, 1 = Mon, 4 = Thu (NFL game days).
@@ -47,8 +52,10 @@ jobs:
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           INCLUDE_EVENT_MARKETS: 'true'
-          EVENT_WINDOW_HOURS: '12'
-          MAX_EVENTS: '2'
+          EVENT_WINDOW_HOURS: '40'     # props for games within ~1.5 days (props carry forward between runs)
+          MAX_EVENTS: '2'               # at most 2 games' props per run (~3 credits each)
+          PROPS_FRESH_HOURS: '6'        # don't re-pull a game whose props are under 6 h old
+          EVENT_IDS: ${{ github.event.inputs.event_ids }}
           EVENT_MARKETS: 'alternate_spreads,alternate_totals,player_anytime_td'
           CREDIT_RESERVE: '25'
         run: node scripts/fetch-data.mjs

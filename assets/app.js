@@ -30,14 +30,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 
 function nextRefresh() {
-  const { hoursUTC, minute, days } = CONFIG.refreshSchedule || {};
-  if (!hoursUTC) return null;
+  const scheds = [].concat(CONFIG.refreshSchedule || []);
   const now = Date.now();
-  for (let d = 0; d < 8; d++) for (const h of hoursUTC) {
-    const t = new Date(); t.setUTCDate(t.getUTCDate() + d); t.setUTCHours(h, minute, 0, 0);
-    if (t > now && days.includes(t.getUTCDay())) return t;
-  }
-  return null;
+  let best = null;
+  for (const { hoursUTC = [], minute = 0, days = [] } of scheds)
+    for (let d = 0; d < 8; d++) for (const h of hoursUTC) {
+      const t = new Date(); t.setUTCDate(t.getUTCDate() + d); t.setUTCHours(h, minute, 0, 0);
+      if (t > now && days.includes(t.getUTCDay()) && (!best || t < best)) best = t;
+    }
+  return best;
 }
 function isOwner() {
   const m = location.search.match(/[?&]owner=([01])/);
@@ -47,7 +48,7 @@ function isOwner() {
 
 // ---------- data ----------
 async function loadData() {
-  const bust = `?t=${Math.floor(Date.now() / 60000)}`;
+  const bust = `?t=${Date.now()}`;
   const [odds, inj, stats] = await Promise.all([
     fetch(`data/odds.json${bust}`).then(r => r.json()),
     fetch(`data/injuries.json${bust}`).then(r => r.json()).catch(() => ({ injuries: [] })),
@@ -64,7 +65,109 @@ async function loadData() {
   const nxt = nextRefresh();
   fresh.innerHTML = `<span class="dot"></span>Odds &amp; injuries updated ${ago(odds.generated_at)}` +
     (nxt ? `<br>Next auto-update ${dayFmt.format(nxt)}` : '') +
-    (isOwner() ? `<a class="owner-refresh" target="_blank" rel="noopener" href="https://github.com/${CONFIG.repo}/actions/workflows/${CONFIG.workflowFile}" title="Opens GitHub: click 'Run workflow' (~9 credits). New odds appear in ~1 min.">↻ Refresh odds</a>` : '');
+    (isOwner() ? `<button type="button" class="owner-refresh" id="sync-btn">↻ Sync</button>` : '');
+  $('#sync-btn')?.addEventListener('click', openSync);
+}
+
+// ---------- owner Sync: trigger the GitHub workflow from the site ----------
+// Uses a fine-grained GitHub token (Actions: read & write on this repo only), kept in this browser.
+const GH_TOKEN_KEY = 'pp-gh-token';
+const ghToken = () => { try { return localStorage.getItem(GH_TOKEN_KEY) || ''; } catch { return ''; } };
+async function gh(path, opts = {}) {
+  const r = await fetch(`https://api.github.com/repos/${CONFIG.repo}${path}`, {
+    ...opts, cache: 'no-store',
+    headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${ghToken()}`, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) }
+  });
+  if (r.status === 401) throw new Error('GitHub rejected the token (expired or mistyped). Tap "Change token".');
+  if (r.status === 403 || r.status === 404) throw new Error('The token can\'t run workflows on this repo. It needs Actions: Read and write on parlay-pilot.');
+  if (!r.ok) throw new Error(`GitHub error ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+function syncGames() {
+  return (state.data?.events || []).filter(e => Date.parse(e.start) > Date.now()).sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+}
+function openSync() {
+  let el = $('#sync-panel');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'sync-panel'; el.className = 'sync-panel';
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Sync odds');
+    document.body.appendChild(el);
+  }
+  el.hidden = false;
+  renderSync();
+}
+function renderSync(status = '') {
+  const el = $('#sync-panel');
+  const close = '<button type="button" class="sp-close" aria-label="Close">✕</button>';
+  if (!ghToken()) {
+    el.innerHTML = `${close}<h3>Connect GitHub (one time)</h3>
+      <p class="muted">The Sync button runs your "Refresh data &amp; deploy site" workflow. It needs a GitHub token that can only do that. The token is saved in this browser only.</p>
+      <ol class="sp-steps">
+        <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a>.</li>
+        <li>Name it "Parlay Pilot sync". Pick an expiration (up to 1 year).</li>
+        <li><b>Repository access:</b> Only select repositories → <b>parlay-pilot</b>.</li>
+        <li><b>Permissions → Repository → Actions:</b> Read and write. Nothing else.</li>
+        <li>Generate, copy it, and paste it here.</li>
+      </ol>
+      <input type="password" id="sp-token" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn" id="sp-save">Save token</button>
+      <p class="sp-status">${esc(status)}</p>`;
+    el.querySelector('#sp-save').addEventListener('click', async () => {
+      const t = el.querySelector('#sp-token').value.trim();
+      if (!/^(github_pat_|ghp_)\w{20,}$/.test(t)) return renderSync('That doesn\'t look like a GitHub token (starts with github_pat_).');
+      try { localStorage.setItem(GH_TOKEN_KEY, t); } catch { return renderSync('This browser is blocking storage, so the token can\'t be saved.'); }
+      try { await gh(`/actions/workflows/${CONFIG.workflowFile}`); renderSync('Connected ✓'); }
+      catch (e) { renderSync(e.message); }
+    });
+  } else {
+    const games = syncGames();
+    const lacking = games.find(e => !e.props_at);
+    const opt = e => `<option value="${esc(e.id)}"${e === lacking ? ' selected' : ''}>${esc(dayFmt.format(new Date(e.start)))} · ${esc(e.away)} @ ${esc(e.home)} — ${e.props_at ? `props ${esc(ago(e.props_at))}` : 'no props yet'}</option>`;
+    el.innerHTML = `${close}<h3>Sync odds now</h3>
+      <p class="muted">Pulls the latest lines for every game, plus alt lines and player props for the game you pick. About 6 credits; takes about a minute.</p>
+      <label class="sp-label">Props for
+        <select id="sp-game"><option value="">Next games automatically</option>${games.map(opt).join('')}</select></label>
+      <button type="button" class="btn" id="sp-go">↻ Sync now</button>
+      <p class="sp-status" aria-live="polite">${esc(status)}</p>
+      <p class="sp-foot"><button type="button" class="linkish" id="sp-forget">Change token</button></p>`;
+    el.querySelector('#sp-go').addEventListener('click', () => runSync(el.querySelector('#sp-game').value));
+    el.querySelector('#sp-forget').addEventListener('click', () => { try { localStorage.removeItem(GH_TOKEN_KEY); } catch {} renderSync(); });
+  }
+  el.querySelector('.sp-close').addEventListener('click', () => { el.hidden = true; });
+}
+async function runSync(eventId) {
+  const el = $('#sync-panel');
+  const say = t => { const s = el.querySelector('.sp-status'); if (s) s.textContent = t; };
+  const go = el.querySelector('#sp-go'); if (go) go.disabled = true;
+  const t0 = Date.now();
+  try {
+    say('Starting…');
+    await gh(`/actions/workflows/${CONFIG.workflowFile}/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main', inputs: { event_ids: eventId || '' } }) });
+    let run = null;
+    while (Date.now() - t0 < 6 * 60e3) {
+      await new Promise(r => setTimeout(r, 5000));
+      const j = await gh(`/actions/workflows/${CONFIG.workflowFile}/runs?event=workflow_dispatch&per_page=3`);
+      run = (j.workflow_runs || []).find(r => Date.parse(r.created_at) >= t0 - 30e3) || null;
+      if (!run) { say('Waiting for GitHub to start it…'); continue; }
+      if (run.status !== 'completed') { say(`${run.status === 'queued' ? 'Queued' : 'Fetching odds and deploying'}… ${Math.round((Date.now() - t0) / 1000)}s`); continue; }
+      break;
+    }
+    if (!run || run.status !== 'completed') throw new Error('Still running after 6 minutes. Check back shortly.');
+    if (run.conclusion !== 'success') throw new Error(`The run ended with "${run.conclusion}". Details are on GitHub → Actions.`);
+    say('Done. Loading the new odds…');
+    // the deploy can take a few seconds to reach the site
+    for (let i = 0; i < 12; i++) {
+      const j = await fetch(`data/meta.json?t=${Date.now()}`, { cache: 'no-store' }).then(r => r.json()).catch(() => null);
+      if (j && Date.parse(j.generated_at) >= t0 - 60e3) break;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    await loadData();
+    toast('Odds synced ✓');
+    renderSync(`Synced ✓ ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+  } catch (e) {
+    say(e.message);
+    if (go) go.disabled = false;
+  }
 }
 const isPractice = () => $('#practice')?.checked;
 const started = e => Date.parse(e.start) <= Date.now() - 5 * 60e3;
@@ -280,7 +383,7 @@ function generate(q) {
     }, 1);
     const rich = upcoming().filter(e => Object.keys(e.books?.[q.book]?.m || {}).some(k => !['h2h', 'spreads', 'totals'].includes(k)));
     let msg = `Couldn't reach ${fmtAmerican(q.target)} from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}.`;
-    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines posted so far — alt lines and player props load about 12 hours before kickoff. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
+    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines here so far — alt lines and player props are pulled automatically within about a day and a half of kickoff${isOwner() ? ' (or tap ↻ Sync at the top to pull them now)' : ''}. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
     else if (q.minLegs > 1 && !q.sgp && q.minLegs > nGames) msg += ` A ${q.minLegs}-leg minimum with same-game legs off needs at least ${q.minLegs} games — pick more games or turn same-game legs on.`;
     else if (q.minLegs > 1) msg += ` With at least ${q.minLegs} legs, each leg has to be a short price — try lowering the minimum, adding games, or raising the target.`;
     else if (!q.ml || !q.spreads || !q.totals || !q.props || !q.tds) msg += ` Some bet types are switched off (${[!q.ml && 'moneyline', !q.spreads && 'spreads', !q.totals && 'totals', !q.props && 'props', !q.tds && 'anytime TDs'].filter(Boolean).join(', ')}) — turning one back on, adding games or changing the target will help.`;

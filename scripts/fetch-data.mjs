@@ -9,6 +9,12 @@
 //   EVENT_MARKETS         comma list for per-event calls (default below)
 //   CREDIT_RESERVE        stop per-event calls if remaining credits drop below this (default 50)
 //   INCLUDE_EVENT_MARKETS "false" to skip alt lines/props entirely (cheapest mode)
+//   EVENT_IDS             comma list of Odds API event ids to pull alt lines + props for right now
+//                         (ignores the window; used by the site's Sync button)
+//   PROPS_FRESH_HOURS     skip games whose props were pulled less than this many hours ago (default 6)
+//
+// Alt lines / props pulled in an earlier run are carried forward until kickoff, so a game
+// keeps its props between runs instead of losing them when it falls outside this run's picks.
 
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { fetchStats } from './fetch-stats.mjs';
@@ -30,6 +36,9 @@ const WINDOW_H = Number(process.env.EVENT_WINDOW_HOURS || 36);
 const MAX_EVENTS = Number(process.env.MAX_EVENTS || 16);
 const RESERVE = Number(process.env.CREDIT_RESERVE || 50);
 const DO_EVENTS = process.env.INCLUDE_EVENT_MARKETS !== 'false';
+const EVENT_IDS = (process.env.EVENT_IDS || '').split(',').map(s => s.trim()).filter(s => /^[a-f0-9]{8,64}$/i.test(s)).slice(0, 4);
+const FRESH_H = Number(process.env.PROPS_FRESH_HOURS || 6);
+const GAME_MARKETS = new Set(FEATURED.split(','));
 
 let creditsRemaining = null;
 let creditsUsed = 0;
@@ -80,13 +89,29 @@ async function fetchOdds() {
   const featured = await oddsGet(`/sports/${SPORT}/odds`, { bookmakers: BOOKS.join(','), markets: FEATURED });
   featured.forEach(ev => mergeEvent(store, ev));
   console.log(`featured: ${featured.length} games`);
+  const now = Date.now();
+
+  // carry forward alt lines / props from the last snapshot for games that haven't started
+  const prev = await readPrevious('data/odds.json');
+  for (const old of prev?.events || []) {
+    const e = store.get(old.id);
+    if (!e || Date.parse(e.start) <= now - 4 * 3600e3 || !old.props_at) continue;
+    e.props_at = old.props_at;
+    for (const [bk, ob] of Object.entries(old.books || {})) {
+      const book = e.books[bk] || (e.books[bk] = { link: ob.link || null, sid: ob.sid || null, m: {} });
+      for (const [mk, m] of Object.entries(ob.m || {})) if (!GAME_MARKETS.has(mk) && !book.m[mk]) book.m[mk] = m;
+    }
+  }
 
   if (DO_EVENTS) {
-    const now = Date.now();
-    const soon = [...store.values()]
-      .filter(e => { const t = Date.parse(e.start); return t > now && t - now < WINDOW_H * 3600e3; })
-      .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
-      .slice(0, MAX_EVENTS);
+    const fresh = e => e.props_at && now - Date.parse(e.props_at) < FRESH_H * 3600e3;
+    const soon = EVENT_IDS.length
+      ? EVENT_IDS.map(id => store.get(id)).filter(Boolean)
+      : [...store.values()]
+        .filter(e => { const t = Date.parse(e.start); return t > now && t - now < WINDOW_H * 3600e3 && !fresh(e); })
+        .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+        .slice(0, MAX_EVENTS);
+    if (EVENT_IDS.length && !soon.length) console.warn(`none of EVENT_IDS matched a listed game: ${EVENT_IDS.join(',')}`);
     for (const e of soon) {
       if (creditsRemaining != null && creditsRemaining < RESERVE) {
         console.warn(`credit reserve hit (${creditsRemaining} left) - skipping remaining per-event calls`);
@@ -94,7 +119,10 @@ async function fetchOdds() {
       }
       try {
         const ev = await oddsGet(`/sports/${SPORT}/events/${e.id}/odds`, { bookmakers: BOOKS.join(','), markets: EVENT_MARKETS });
+        // a fresh pull replaces any carried-forward alt/prop markets for this game
+        for (const b of Object.values(e.books)) for (const mk of Object.keys(b.m)) if (!GAME_MARKETS.has(mk)) delete b.m[mk];
         mergeEvent(store, ev);
+        e.props_at = new Date().toISOString();
         console.log(`event markets: ${e.away} @ ${e.home}`);
       } catch (err) {
         console.warn(`event ${e.id} failed: ${err.message}`);
