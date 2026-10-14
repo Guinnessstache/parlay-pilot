@@ -3,7 +3,8 @@ name: Refresh data & deploy site
 # FREE-PLAN SETTINGS (The Odds API, 500 credits/month)
 # Each run costs ~3 credits for main lines on every game, plus ~3 credits per game
 # for alt spreads / alt totals / anytime TD on the next 2 games kicking off within 12 h.
-# Worst case ~9 credits/run x 3 runs x Thu/Sun/Mon ≈ 350 credits/month, leaving
+# Worst case ~9 credits/run x 3 runs x Thu/Sun/Mon ≈ 350 credits/month, plus ~50 for one
+# off-day morning run Tue/Wed/Fri/Sat, leaving
 # ~150 for manual "Run workflow" clicks. Check data/meta.json -> credits_remaining.
 #
 # Upgraded to a paid plan? Bump EVENT_WINDOW_HOURS to 36, MAX_EVENTS to 16, add the
@@ -18,6 +19,8 @@ on:
     # UTC times. 14:07 / 19:07 / 23:07 UTC = 10:07am / 3:07pm / 7:07pm Eastern (EDT).
     # Days: 0 = Sun, 1 = Mon, 4 = Thu (NFL game days).
     - cron: '7 14,19,23 * * 0,1,4'
+    # Off days (Tue/Wed/Fri/Sat): one morning refresh so newly posted lines show up (~3 credits each).
+    - cron: '7 13 * * 2,3,5,6'
 
 permissions:
   contents: write
@@ -33,6 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the data commit can rebase onto a newer main
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -50,13 +55,18 @@ jobs:
 
       - name: Commit data snapshot
         if: github.event_name != 'push'
+        continue-on-error: true   # never block the deploy over the history snapshot
         run: |
           git config user.name "parlay-bot"
           git config user.email "parlay-bot@users.noreply.github.com"
           git add data/
           if git diff --cached --quiet; then echo "no data changes"; else
             git commit -m "data: refresh $(date -u +%Y-%m-%dT%H:%MZ)"
-            git push
+            # main may have moved on (new code, or a re-run of an older run): replay this fresh data on top
+            for i in 1 2 3; do
+              git pull --rebase -X theirs origin main && git push origin HEAD:main && break
+              sleep 5
+            done
           fi
 
       - uses: actions/configure-pages@v5
