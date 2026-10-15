@@ -124,13 +124,17 @@ function renderSync(status = '') {
     const lacking = games.find(e => !e.props_at);
     const opt = e => `<option value="${esc(e.id)}"${e === lacking ? ' selected' : ''}>${esc(dayFmt.format(new Date(e.start)))} · ${esc(e.away)} @ ${esc(e.home)} — ${e.props_at ? `props ${esc(ago(e.props_at))}` : 'no props yet'}</option>`;
     el.innerHTML = `${close}<h3>Sync odds now</h3>
-      <p class="muted">Pulls the latest lines for every game, plus alt lines and player props for the game you pick. About 6 credits; takes about a minute.</p>
+      <p class="muted">Pulls the latest lines for every game, plus alt lines and player props (TDs and yardage) for the game you pick. About 10 credits; takes about a minute.<span class="sp-credits"></span></p>
       <label class="sp-label">Props for
         <select id="sp-game"><option value="">Next games automatically</option>${games.map(opt).join('')}</select></label>
       <button type="button" class="btn" id="sp-go">↻ Sync now</button>
       <p class="sp-status" aria-live="polite">${esc(status)}</p>
       <p class="sp-foot"><button type="button" class="linkish" id="sp-forget">Change token</button></p>`;
     el.querySelector('#sp-go').addEventListener('click', () => runSync(el.querySelector('#sp-game').value));
+    fetch(`data/meta.json?t=${Date.now()}`, { cache: 'no-store' }).then(r => r.json()).then(m => {
+      const c = el.querySelector('.sp-credits');
+      if (c && m.credits_remaining != null) c.textContent = ` ${m.credits_remaining} credits left this month.`;
+    }).catch(() => {});
     el.querySelector('#sp-forget').addEventListener('click', () => { try { localStorage.removeItem(GH_TOKEN_KEY); } catch {} renderSync(); });
   }
   el.querySelector('.sp-close').addEventListener('click', () => { el.hidden = true; });

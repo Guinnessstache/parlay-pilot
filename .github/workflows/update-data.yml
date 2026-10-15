@@ -4,8 +4,9 @@ name: Refresh data & deploy site
 # Each run costs ~3 credits for main lines on every game, plus ~3 credits per game
 # for alt spreads / alt totals / anytime TD on up to 2 games kicking off within 40 h
 # (skipping games pulled in the last 6 h; earlier pulls carry forward until kickoff).
-# Typical week ≈ 75-85 credits (≈ 350/month), leaving ~150 for the site's Sync button
-# (~6 credits per synced game). Check data/meta.json -> credits_remaining.
+# Yardage props (pass/rush/rec yds, receptions) add 4 credits per game and are only pulled
+# within 12 h of kickoff or on a Sync, and stop automatically below 150 credits left.
+# Typical week ≈ 100-110 credits (≈ 450/month); a Sync costs ~10 credits. Check data/meta.json -> credits_remaining.
 #
 # Upgraded to a paid plan? Bump EVENT_WINDOW_HOURS to 36, MAX_EVENTS to 16, add the
 # player yardage markets back to EVENT_MARKETS, and widen the cron (see README).
@@ -57,6 +58,10 @@ jobs:
           PROPS_FRESH_HOURS: '6'        # don't re-pull a game whose props are under 6 h old
           EVENT_IDS: ${{ github.event.inputs.event_ids }}
           EVENT_MARKETS: 'alternate_spreads,alternate_totals,player_anytime_td'
+          # yardage props (+4 credits per game) only within 12 h of kickoff or on a Sync; off below 150 credits
+          FULL_MARKETS: 'player_pass_yds,player_rush_yds,player_reception_yds,player_receptions'
+          FULL_WINDOW_HOURS: '12'
+          FULL_MIN_CREDITS: '150'
           CREDIT_RESERVE: '25'
         run: node scripts/fetch-data.mjs
 

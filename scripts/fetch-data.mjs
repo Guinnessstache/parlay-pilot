@@ -12,6 +12,9 @@
 //   EVENT_IDS             comma list of Odds API event ids to pull alt lines + props for right now
 //                         (ignores the window; used by the site's Sync button)
 //   PROPS_FRESH_HOURS     skip games whose props were pulled less than this many hours ago (default 6)
+//   FULL_MARKETS          extra markets (yardage props) added when a game is close to kickoff or synced by hand
+//   FULL_WINDOW_HOURS     "close to kickoff" for FULL_MARKETS (default 12)
+//   FULL_MIN_CREDITS      skip FULL_MARKETS once remaining credits drop below this (default 150)
 //
 // Alt lines / props pulled in an earlier run are carried forward until kickoff, so a game
 // keeps its props between runs instead of losing them when it falls outside this run's picks.
@@ -39,6 +42,9 @@ const DO_EVENTS = process.env.INCLUDE_EVENT_MARKETS !== 'false';
 const EVENT_IDS = (process.env.EVENT_IDS || '').split(',').map(s => s.trim()).filter(s => /^[a-f0-9]{8,64}$/i.test(s)).slice(0, 4);
 const FRESH_H = Number(process.env.PROPS_FRESH_HOURS || 6);
 const GAME_MARKETS = new Set(FEATURED.split(','));
+const FULL_MARKETS = process.env.FULL_MARKETS || '';
+const FULL_WINDOW_H = Number(process.env.FULL_WINDOW_HOURS || 12);
+const FULL_MIN = Number(process.env.FULL_MIN_CREDITS || 150);
 
 let creditsRemaining = null;
 let creditsUsed = 0;
@@ -118,12 +124,17 @@ async function fetchOdds() {
         break;
       }
       try {
-        const ev = await oddsGet(`/sports/${SPORT}/events/${e.id}/odds`, { bookmakers: BOOKS.join(','), markets: EVENT_MARKETS });
+        // yardage props cost 1 credit per market per game, so only add them near kickoff or on a hand sync
+        const full = FULL_MARKETS && (EVENT_IDS.length || Date.parse(e.start) - now < FULL_WINDOW_H * 3600e3)
+          && (creditsRemaining == null || creditsRemaining >= FULL_MIN);
+        const markets = full ? `${EVENT_MARKETS},${FULL_MARKETS}` : EVENT_MARKETS;
+        const ev = await oddsGet(`/sports/${SPORT}/events/${e.id}/odds`, { bookmakers: BOOKS.join(','), markets });
         // a fresh pull replaces any carried-forward alt/prop markets for this game
-        for (const b of Object.values(e.books)) for (const mk of Object.keys(b.m)) if (!GAME_MARKETS.has(mk)) delete b.m[mk];
+        const pulled = new Set(markets.split(','));
+        for (const b of Object.values(e.books)) for (const mk of Object.keys(b.m)) if (pulled.has(mk)) delete b.m[mk];
         mergeEvent(store, ev);
         e.props_at = new Date().toISOString();
-        console.log(`event markets: ${e.away} @ ${e.home}`);
+        console.log(`event markets${full ? ' (+yardage props)' : ''}: ${e.away} @ ${e.home}`);
       } catch (err) {
         console.warn(`event ${e.id} failed: ${err.message}`);
       }
