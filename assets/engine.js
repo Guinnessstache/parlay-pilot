@@ -116,7 +116,7 @@ export function legLabel(leg) {
 }
 
 // slot = things that cannot both be in one parlay (same side / same total / same player-stat)
-function slotOf(leg) {
+export function slotOf(leg) {
   const m = leg.market;
   if (m === 'h2h' || isSpread(m)) return `${leg.eventId}|side`;
   if (isTotal(m)) return `${leg.eventId}|total`;
@@ -193,34 +193,44 @@ export function buildLegs(data, injuriesList, opts) {
 // ---------- search ----------
 // target = decimal odds wanted (e.g. $10 to win $1000 -> 101.0)
 export function findParlays(legs, target, opts = {}) {
-  const { maxLegs = 8, minLegs = 1, maxPerGame = 3, sameGame = true, lo = 1.0, hi = 1.3, beam = 400, results = 3 } = opts;
+  const { maxLegs = 8, minLegs = 1, maxPerGame = 3, sameGame = true, lo = 1.0, hi = 1.3, beam = 400, results = 3, locked = [] } = opts;
+  // Locked legs are on every ticket; the search fills in the rest of the payout around them.
+  const nL = locked.length;
+  const lockD = locked.reduce((a, l) => a + Math.log(l.dec), 0), lockP = locked.reduce((a, l) => a + Math.log(l.p), 0);
+  const lockSlots = new Set(locked.map(l => l.slot));
+  const lockGame = {}; for (const l of locked) lockGame[l.eventId] = (lockGame[l.eventId] || 0) + 1;
+  const lockIds = new Set(locked.map(l => l.id));
   // With a leg minimum (promo requirements), legs must be shorter-priced on average,
   // so let heavier favourites into the pool.
-  const perLeg = Math.pow(target, 1 / Math.max(1, minLegs));
+  const rem = target / Math.exp(lockD);   // payout still to find after the locked legs
+  const perLeg = Math.pow(Math.max(1.01, rem), 1 / Math.max(1, minLegs - nL));
   const minDec = Math.min(1.08, 1 + (perLeg - 1) * 0.35);
   const logT = Math.log(target);
 
   // Candidate pool: reasonably priced legs that can contribute without overshooting alone.
-  let pool = legs.filter(l => l.ev > -0.12 && l.dec <= target * hi && l.dec >= minDec);
+  let pool = legs.filter(l => l.ev > -0.12 && l.dec <= rem * hi && l.dec >= minDec && !lockIds.has(l.id) && !lockSlots.has(l.slot)
+    && (sameGame || !lockGame[l.eventId]));
   // score each leg by how efficiently it buys odds: log(p)/log(dec) closer to -1 is better
   for (const l of pool) l.eff = Math.log(l.p) / Math.log(l.dec);
   pool.sort((a, b) => b.ev - a.ev);
   pool = pool.slice(0, 260);
   pool.sort((a, b) => a.id < b.id ? -1 : 1);
-  if (!pool.length) return [];
+  if (!pool.length && !nL) return [];
 
   // best efficiency among top legs - used to estimate the cost of the remaining distance
   const effs = pool.map(l => l.eff).sort((a, b) => b - a);
-  const bestEff = effs[Math.min(5, effs.length - 1)];
+  const bestEff = effs.length ? effs[Math.min(5, effs.length - 1)] : -1;
 
   const done = [];
   const consider = s => {
-    if (s.idx.length < minLegs) return;
+    if (s.idx.length + nL < minLegs || s.idx.length + nL === 0) return;
     const ratio = Math.exp(s.logD - logT);
     if (ratio >= lo && ratio <= hi) done.push(s);
   };
-  let states = [{ idx: [], logD: 0, logP: 0, slots: new Set(), perGame: {}, last: -1 }];
-  for (let depth = 1; depth <= maxLegs; depth++) {
+  let states = [{ idx: [], logD: lockD, logP: lockP, slots: new Set(lockSlots), perGame: { ...lockGame }, last: -1 }];
+  consider(states[0]);   // the locked legs alone might already be the ticket
+  if (nL && done.length) return [summarize(locked)];   // don't pad it with filler legs
+  for (let depth = 1; depth <= maxLegs - nL; depth++) {
     const next = [];
     for (const s of states) {
       for (let i = s.last + 1; i < pool.length; i++) {
@@ -231,7 +241,7 @@ export function findParlays(legs, target, opts = {}) {
         const logD = s.logD + Math.log(l.dec);
         if (logD > logT + Math.log(hi)) continue;
         // can the legs still required by minLegs fit under the payout cap?
-        const still = Math.max(0, minLegs - s.idx.length - 1);
+        const still = Math.max(0, minLegs - nL - s.idx.length - 1);
         if (still && logD + still * Math.log(minDec) > logT + Math.log(hi)) continue;
         const slots = new Set(s.slots); slots.add(l.slot);
         const ns = { idx: [...s.idx, i], logD, logP: s.logP + Math.log(l.p), slots, perGame: { ...s.perGame, [l.eventId]: g + 1 }, last: i };
@@ -242,7 +252,7 @@ export function findParlays(legs, target, opts = {}) {
     if (!next.length) break;
     // estimated final log-probability if we finish efficiently
     for (const s of next) {
-      const still = Math.max(0, minLegs - s.idx.length);
+      const still = Math.max(0, minLegs - nL - s.idx.length);
       // remaining odds to buy, at least enough for the legs still required
       const need = Math.max(logT - s.logD, still * Math.log(minDec * 1.15));
       s.h = s.logP + Math.max(0, need) * bestEff - 0.01 * s.idx.length;
@@ -261,13 +271,14 @@ export function findParlays(legs, target, opts = {}) {
     const idea = i => `${pool[i].slot}|${pool[i].name}|${pool[i].desc || ''}`;
     const ideas = new Set(s.idx.map(idea));
     const tooSimilar = picked.some(p => {
+      if (!p.idx.length || !s.idx.length) return !p.idx.length && !s.idx.length;
       const inter = p.idx.filter(i => ideas.has(idea(i))).length;
       return inter / Math.min(p.idx.length, s.idx.length) > 0.5;
     });
     if (!tooSimilar) picked.push(s);
     if (picked.length >= results) break;
   }
-  return picked.map(s => summarize(s.idx.map(i => pool[i])));
+  return picked.map(s => summarize([...locked, ...s.idx.map(i => pool[i])]));
 }
 
 export function summarize(legs) {

@@ -7,7 +7,7 @@ import {
 } from './engine.js';
 
 const $ = s => document.querySelector(s);
-const state = { data: null, injuries: [], inj: null, book: CONFIG.defaultBook, selected: new Set() };
+const state = { data: null, injuries: [], inj: null, book: CONFIG.defaultBook, selected: new Set(), locked: [], lastQ: null };
 
 // ---------- formatting ----------
 const money = n => n >= 1000 ? `$${Math.round(n).toLocaleString()}` : `$${(Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
@@ -361,16 +361,32 @@ function generate(q) {
   const res = $('#results');
   if (!(q.stake > 0) || !(q.win > 0)) { res.innerHTML = '<div class="notice bad">Enter how much you want to bet and how much you want to win.</div>'; return; }
   if (q.target < 1.05) { res.innerHTML = '<div class="notice bad">That payout is less than your bet back. Raise the "to win" amount.</div>'; return; }
-  const eventIds = q.games.length ? q.games : null;
+  state.lastQ = q;
+  const lockEv = [...new Set(state.locked.map(x => x.eventId))];
+  const eventIds = q.games.length ? [...new Set([...q.games, ...lockEv])] : null;
+  // look locked legs up ignoring the bet-type filters (you asked for them by name)
+  const lockNotes = [];
+  let locked = [];
+  if (state.locked.length) {
+    const all = buildLegs(state.data, state.injuries, { book: q.book, eventIds: lockEv, allowQuestionable: true, stats: state.stats, useForm: q.form }).legs;
+    for (const x of state.locked) {
+      const l = all.find(y => y.id === x.id);
+      if (!l) { lockNotes.push(`${x.label} isn't offered on ${BOOK_NAMES[q.book]} right now, so it was left off.`); continue; }
+      if (Date.parse(l.start) <= Date.now() && !isPractice()) { lockNotes.push(`${x.label}: that game has started, so it was left off.`); continue; }
+      l.notes.push('🔒 your pick');
+      locked.push(l);
+    }
+  }
   const { legs, excluded } = buildLegs(state.data, state.injuries, {
     book: q.book, eventIds, includeProps: q.props, includeAlts: q.alts, includeML: q.ml, includeSpreads: q.spreads, includeTotals: q.totals, includeTD: q.tds, allowQuestionable: q.questionable,
     stats: state.stats, useForm: q.form
   });
   const nGames = new Set(legs.map(l => l.eventId)).size;
-  let tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(2, q.minLegs, Math.min(q.maxLegs, 5)) : 1 });
+  const lockedSG = new Set(locked.map(l => l.eventId)).size < locked.length;
+  let tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp || lockedSG, locked, maxPerGame: q.sgp ? Math.max(2, q.minLegs, Math.min(q.maxLegs, 5)) : Math.max(1, ...Object.values(locked.reduce((a, l) => (a[l.eventId] = (a[l.eventId] || 0) + 1, a), {}))) });
   let widened = false;
   if (!tickets.length) { // retry with a looser payout window
-    tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp, maxPerGame: q.sgp ? Math.max(5, q.minLegs) : 1, lo: 0.85, hi: 1.8 });
+    tickets = findParlays(legs, q.target, { maxLegs: q.maxLegs, minLegs: q.minLegs, sameGame: q.sgp || lockedSG, locked, maxPerGame: q.sgp || lockedSG ? Math.max(5, q.minLegs) : 1, lo: 0.85, hi: 1.8 });
     widened = tickets.length > 0;
   }
 
@@ -387,7 +403,11 @@ function generate(q) {
     }, 1);
     const rich = upcoming().filter(e => Object.keys(e.books?.[q.book]?.m || {}).some(k => !['h2h', 'spreads', 'totals'].includes(k)));
     let msg = `Couldn't reach ${fmtAmerican(q.target)} from ${nGames} game${nGames === 1 ? '' : 's'}${q.sgp ? '' : ' (same-game legs are off)'}.`;
-    if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines here so far — alt lines and player props are pulled automatically within about a day and a half of kickoff${isOwner() ? ' (or tap ↻ Sync at the top to pull them now)' : ''}. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
+    const lockDec = locked.reduce((a, l) => a * l.dec, 1);
+    if (locked.length && lockDec > q.target * 1.3) msg = `Your must-have legs already pay ${fmtAmerican(lockDec)} on their own — more than the ${fmtAmerican(q.target)} you asked for. Raise the "to win" amount or remove a must-have leg.`;
+    else if (locked.length && locked.length >= q.maxLegs) msg += ` Your ${locked.length} must-have legs use up the ${q.maxLegs}-leg maximum — raise max legs in Fine-tune.`;
+    if (locked.length && (lockDec > q.target * 1.3 || locked.length >= q.maxLegs)) {}
+    else if (thin.length) msg += ` ${thin.map(e => `${esc(e.away)} @ ${esc(e.home)}`).slice(0, 2).join(' and ')}${thin.length > 2 ? ` (+${thin.length - 2} more)` : ''} only ${thin.length > 1 ? 'have' : 'has'} game lines here so far — alt lines and player props are pulled automatically within about a day and a half of kickoff${isOwner() ? ' (or tap ↻ Sync at the top to pull them now)' : ''}. With just those${!q.ml || !q.spreads || !q.totals ? ' (and your bet-type filters)' : ''}, the most ${nGames === 1 ? 'this game' : 'these games'} can pay is about ${fmtAmerican(maxDec)}.`;
     else if (q.minLegs > 1 && !q.sgp && q.minLegs > nGames) msg += ` A ${q.minLegs}-leg minimum with same-game legs off needs at least ${q.minLegs} games — pick more games or turn same-game legs on.`;
     else if (q.minLegs > 1) msg += ` With at least ${q.minLegs} legs, each leg has to be a short price — try lowering the minimum, adding games, or raising the target.`;
     else if (!q.ml || !q.spreads || !q.totals || !q.props || !q.tds) msg += ` Some bet types are switched off (${[!q.ml && 'moneyline', !q.spreads && 'spreads', !q.totals && 'totals', !q.props && 'props', !q.tds && 'anytime TDs'].filter(Boolean).join(', ')}) — turning one back on, adding games or changing the target will help.`;
@@ -403,7 +423,7 @@ function generate(q) {
     }));
     return;
   }
-  const notes = [];
+  const notes = lockNotes.map(n => `<div class="notice">${esc(n)}</div>`);
   if (widened) notes.push(`<div class="notice">Nothing landed right on your number, so these are the closest tickets available.</div>`);
   if (q.target > 50) notes.push(`<div class="notice info">At ${fmtAmerican(q.target)} the best realistic ticket hits about ${oneIn(tickets[0].p)} times. These are the cheapest-priced ways to get there, not likely winners.</div>`);
   const outCount = excluded.filter(e => /listed/.test(e.why)).length;
@@ -417,6 +437,63 @@ function generate(q) {
   res.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+
+// ---------- must-have (locked) legs ----------
+function toggleLock(l, { rebuild = true } = {}) {
+  const i = state.locked.findIndex(x => x.id === l.id);
+  if (i >= 0) state.locked.splice(i, 1);
+  else {
+    if (state.locked.length >= 6) return toast('That\'s plenty of must-have legs (6 max)');
+    // one leg per slot: locking the Over replaces a locked Under on the same line
+    state.locked = state.locked.filter(x => x.slot !== l.slot);
+    state.locked.push({ id: l.id, label: l.label, eventId: l.eventId, slot: l.slot, dec: l.dec, game: l.game });
+  }
+  saveLocks(); renderLocks();
+  if (rebuild && state.lastQ) $('#form').requestSubmit();
+  else toast(i >= 0 ? 'Removed' : 'Locked — it\'ll be on every ticket you build');
+}
+function saveLocks() { try { sessionStorage.setItem('pp-locks', JSON.stringify(state.locked)); } catch {} }
+function renderLocks() {
+  const box = $('#lock-chips');
+  if (!box) return;
+  box.innerHTML = state.locked.map(x => `<span class="lock-chip"><span>🔒 ${esc(x.label)} <small>${fmtAmerican(x.dec)} · ${esc(x.game)}</small></span><button type="button" data-id="${esc(x.id)}" aria-label="Remove ${esc(x.label)}">✕</button></span>`).join('');
+  box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    const x = state.locked.find(y => y.id === b.dataset.id); if (x) toggleLock(x, { rebuild: !!state.lastQ });
+  }));
+}
+function setupLockPicker() {
+  try { state.locked = JSON.parse(sessionStorage.getItem('pp-locks') || '[]'); } catch { state.locked = []; }
+  renderLocks();
+  const inp = $('#lock-search'), ul = $('#lock-suggest');
+  let all = null;
+  const pool = () => {
+    const q = readForm();
+    const ids = q.games.length ? q.games : upcoming().map(g => g.id);
+    return buildLegs(state.data, state.injuries, { book: q.book, eventIds: ids, allowQuestionable: true, stats: state.stats, useForm: q.form }).legs
+      .filter(l => !started(l) || isPractice());
+  };
+  const show = () => {
+    const words = inp.value.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) { ul.hidden = true; return; }
+    all = all || pool();
+    const hits = all.filter(l => { const t = `${l.label} ${l.game} ${MARKET_LABEL[l.market] || ''}`.toLowerCase(); return words.every(w => t.includes(w)); })
+      .sort((a, b) => (a.desc || '').localeCompare(b.desc || '') || a.market.localeCompare(b.market) || (a.point ?? 0) - (b.point ?? 0) || a.name.localeCompare(b.name))
+      .slice(0, 30);
+    ul.innerHTML = hits.length ? hits.map((l, i) => `<li><button type="button" data-i="${i}"><span>${esc(l.label)}</span><span class="ls-px">${fmtAmerican(l.dec)} <small>${pct(l.p)}</small></span><small class="ls-game">${esc(MARKET_LABEL[l.market] || l.market)} · ${esc(l.game)}</small></button></li>`).join('')
+      : '<li class="muted ls-none">No lines match. Props show up about a day before kickoff.</li>';
+    ul.hidden = false;
+    ul.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      const l = hits[+b.dataset.i];
+      if (!state.locked.some(x => x.id === l.id)) toggleLock(l, { rebuild: false });
+      inp.value = ''; ul.hidden = true;
+    }));
+  };
+  let t;
+  inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(show, 150); });
+  inp.addEventListener('focus', () => { all = null; });
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ul.querySelector('button')?.click(); } if (e.key === 'Escape') ul.hidden = true; });
+  document.addEventListener('click', e => { if (!e.target.closest('.locks')) ul.hidden = true; });
+}
 
 // ---------- practice-mode live grading ----------
 const ICON = { won: '✓', lost: '✗', ahead: '▲', behind: '▼', pending: '•' };
@@ -843,10 +920,12 @@ function renderTicket(t, q, title, opts = {}) {
   for (const l of t.legs) {
     const li = document.createElement('li');
     if (l.gone) li.className = 'gone';
-    li.innerHTML = `<span class="pick">${esc(l.label)}</span>
+    const isLocked = state.locked.some(x => x.id === l.id);
+    li.innerHTML = `<span class="pick">${esc(l.label)}<button type="button" class="lock-btn${isLocked ? ' on' : ''}" aria-pressed="${isLocked}" title="${isLocked ? 'Remove from must-have legs' : 'Keep this leg and rebuild around it'}">${isLocked ? '🔒' : '🔓'}</button></span>
       <span class="px">${fmtAmerican(l.dec)}<small>${pct(l.p)} real</small></span>
       <span class="meta">${esc(MARKET_LABEL[l.market] || l.market)} · ${esc(l.game)} · ${esc(dayFmt.format(new Date(l.start)))}${l.link ? ` · <a class="single" href="${esc(l.link)}" target="_blank" rel="noopener">open leg</a>` : ''}</span>
       ${l.notes.concat(l.moved ? [l.moved] : []).map(n => `<span class="note">${esc(n)}</span>`).join('')}`;
+    li.querySelector('.lock-btn').addEventListener('click', () => toggleLock(l));
     ol.appendChild(li);
   }
 
@@ -998,6 +1077,7 @@ const INFO = {
   sgp: 'Same-game legs: allow more than one leg from the same game (a same-game parlay). Off = at most one leg per game. Sportsbooks re-price same-game parlays, so the slip may show slightly different odds.',
   questionable: 'By default, props on players listed Questionable are skipped (Out / Doubtful / IR are always skipped). Turn this on to allow Questionable players — the leg will be flagged.',
   form: 'On: each leg\'s chance is nudged toward how often that bet hit in the player\'s/team\'s recent games. Example: Knox anytime TD is ~15% by the odds; he scored in 2 of his last 5 (40%), so it becomes ~16–17% — not 40%. Five games is little evidence and the odds already account for form, so the nudge is capped at ±35% of the market\'s number. It mostly breaks ties between similar legs. Off: odds only.',
+  lock: 'Must-have legs go on every ticket you build, and the rest of the ticket is filled in around them to reach your payout. Search for any line (a player, team or bet type) and tap it, or tap 🔓 on a leg in a built ticket to lock it and rebuild. Locked legs count toward your max legs and skip the bet-type filters, since you picked them yourself. Your own picks can lower the ticket\'s real chance compared with the builder\'s best version.',
   practice: 'Practice mode: include games that have already kicked off. Tickets are built from the last pre-kickoff prices, can\'t be placed (no sportsbook button), and every leg is graded live from ESPN — ✓ won, ✗ lost, ▲ on track, ▼ behind — updating every 30 seconds. Use it to see how the picks would have done. You can also type "practice" or "live" in the box.',
   scan: 'Add a bet you placed in the DraftKings or FanDuel app: upload a screenshot of the slip (My Bets → the ticket). The text is read on your phone — the image is never uploaded anywhere. You then check what was read (legs, wager, payout), fix anything, and save. It\'s tracked and graded live like any other ticket. Tip: crop to just the one ticket for best results.',
   live: 'Live chance: how likely the leg (or whole ticket) is to win from here. Moneylines use ESPN\'s live win probability. Spreads and totals use the current score, time left and the game\'s pre-game line (calibrated to match ESPN\'s win probability). Player props use what the player has so far and how much game is left. The ticket number multiplies the legs, so same-game legs that move together are treated as independent. Updates every 30 seconds.',
@@ -1043,6 +1123,7 @@ async function boot() {
     return;
   }
   state.board = await getScoreboard();
+  setupLockPicker();
   selectScope('tonight');
   setExamples();
   updateMineCount();

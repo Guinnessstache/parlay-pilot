@@ -326,3 +326,24 @@ button.info:hover, button.info:focus-visible { color: var(--accent); border-colo
 .sync-panel .btn { width: 100%; justify-content: center; }
 .sync-panel .sp-status { min-height: 1.2em; color: var(--accent); font-family: var(--mono, monospace); font-size: 13px; }
 .sync-panel .sp-foot { text-align: right; margin: 4px 0 0; }
+
+/* must-have (locked) legs */
+.locks { margin: 4px 0 14px; }
+.locks-head { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.lock-chips { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.lock-chips:empty { display: none; }
+.lock-chip { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; font-weight: 600; color: var(--pick, var(--text)); }
+.lock-chip small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.lock-chip button { background: transparent; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px 6px; }
+#lock-search { width: 100%; box-sizing: border-box; padding: 11px 12px; border-radius: 10px; border: 1px dashed var(--line); background: var(--bg-2, var(--bg)); color: var(--text); font-size: 15px; }
+.lock-suggest { list-style: none; margin: 6px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.lock-suggest li { border-bottom: 1px solid var(--line); }
+.lock-suggest li:last-child { border-bottom: 0; }
+.lock-suggest button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; text-align: left; background: transparent; border: 0; color: var(--text); padding: 10px 12px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.lock-suggest button:hover { background: var(--panel-2); }
+.lock-suggest .ls-px { font-family: var(--mono); text-align: right; }
+.lock-suggest .ls-px small, .lock-suggest .ls-game { color: var(--muted); font-weight: 400; font-size: 12px; }
+.lock-suggest .ls-game { grid-column: 1 / -1; }
+.lock-suggest .ls-none { padding: 10px 12px; font-size: 13px; }
+.lock-btn { margin-left: 8px; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; font-size: 13px; line-height: 1.6; cursor: pointer; vertical-align: 1px; opacity: .65; }
+.lock-btn.on { opacity: 1; border-color: var(--accent); }
